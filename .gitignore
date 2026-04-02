@@ -36,6 +36,7 @@ venv/
 *.bak
 *.swp
 *.swo
+kws/captures/
 
 # Audio/text backup artifacts: keep only working text banks
 /docs/texts_backup_*/
