@@ -1,9 +1,0 @@
-idf_component_register(
-    SRCS
-        "memory_monitor.c"
-        "orb_intents.c"
-    INCLUDE_DIRS
-        "include"
-    REQUIRES
-        esp_timer
-)

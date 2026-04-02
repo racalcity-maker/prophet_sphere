@@ -1,44 +1,47 @@
-# Build/output
-/build/
-/cmake-build-*/
-*.o
-*.obj
-*.a
-*.so
-*.dll
-*.exe
-*.map
+# Keep repo minimal: only Pi WS server + used text banks
+# Ignore everything by default
+/*
 
-# ESP-IDF local/generated
-/sdkconfig
-/sdkconfig.old
-/managed_components/
+# Keep control files
+!/.gitignore
+!/README.md
 
-# Local IDE/system
-/.vscode/
-.DS_Store
-Thumbs.db
+# ----- docs -----
+!/docs/
+/docs/*
+!/docs/texts/
+!/docs/texts/**
+!/docs/text_improoved/
+!/docs/text_improoved/**
+/docs/texts/*.bak.txt
+/docs/texts_backup_*/
+/docs/texts_broken_*/
+/docs/texts.zip
 
-# Python cache/venv
-**/__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
+# ----- kws -----
+!/kws/
+!/kws/README.md
+!/kws/archetypes_map.json
+!/kws/word_map_runtime_v1.json
 
-# Archives/local drops
-*.zip
-/Oracle.zip
+!/kws/pi_ws/
+!/kws/pi_ws/**
 
-# Runtime/log/temp artifacts
+!/kws/scripts/
+/kws/scripts/*
+!/kws/scripts/pi_mic_ws_server.py
+!/kws/scripts/deploy_pi_ws.ps1
+!/kws/scripts/pi_install_piper.sh
+!/kws/scripts/pi_oracle_llm_smoke.py
+!/kws/scripts/pi_tts_ab_test.py
+!/kws/scripts/local_oracle_tts_preview.py
+
+# Runtime/generated artifacts
+kws/**/__pycache__/
+kws/**/*.pyc
+kws/captures/
 *.log
 *.tmp
 *.bak
 *.swp
 *.swo
-kws/captures/
-
-# Audio/text backup artifacts: keep only working text banks
-/docs/texts_backup_*/
-/docs/texts_broken_*/
-/docs/texts/*.bak.txt
