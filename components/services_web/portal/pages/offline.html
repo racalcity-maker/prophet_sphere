@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Orb Offline</title>
+    <link rel="stylesheet" href="/assets/css/app.css">
+</head>
+<body data-page="offline">
+<div class="layout">
+    <header class="top">
+        <h1 class="title">Orb Offline Portal</h1>
+        <p class="subtitle">Current mode: offline_scripted</p>
+    </header>
+
+    <section class="card">
+        <div class="row row-between">
+            <div class="row">
+                <span class="kpi">Mode: <strong id="mode-name">offline_scripted</strong></span>
+                <span class="kpi">FSM: <strong id="mode-fsm">-</strong></span>
+                <span class="kpi">Session: <strong id="mode-session">IDLE</strong></span>
+                <span class="kpi">Submode: <strong id="mode-submode">aura</strong></span>
+                <span class="kpi">Aura: <strong id="mode-aura-color">-</strong></span>
+            </div>
+            <div class="row">
+                <button id="mode-refresh-btn" class="primary">Refresh</button>
+            </div>
+        </div>
+        <p id="status" class="muted">Ready</p>
+    </section>
+
+    <section class="card">
+        <div class="tabs mode-tabs">
+            <button class="tab-btn active" data-mode-tab="home">Home</button>
+            <button class="tab-btn" data-mode-tab="talk">Talk</button>
+            <button class="tab-btn" data-mode-tab="settings">Settings</button>
+        </div>
+    </section>
+
+    <section class="card mode-panel active" data-mode-panel="home">
+        <h3>Home</h3>
+        <p class="muted">Orb stays in offline mode. Mode switching from web UI is disabled by design.</p>
+        <div class="grid-two">
+            <div class="field-box">
+                <div class="field-title">Interaction State</div>
+                <div id="home-session-state" class="field-value">IDLE</div>
+            </div>
+            <div class="field-box">
+                <div class="field-title">Active Submode</div>
+                <div id="home-submode-state" class="field-value">aura</div>
+            </div>
+            <div class="field-box">
+                <div class="field-title">Aura Color</div>
+                <div id="home-aura-color" class="field-value">-</div>
+            </div>
+            <div class="field-box">
+                <div class="field-title">Lottery Start Seq</div>
+                <div id="home-lottery-seq" class="field-value">0</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="card mode-panel" data-mode-panel="talk">
+        <h3>Talk</h3>
+        <p class="muted">This tab is reserved and not used in offline mode.</p>
+    </section>
+
+    <section class="card mode-panel" data-mode-panel="settings">
+        <h3>Settings</h3>
+
+        <div class="tabs sub-tabs">
+            <button class="tab-btn active" data-settings-tab="common">Common</button>
+            <button class="tab-btn" data-settings-tab="aura">Aura</button>
+            <button class="tab-btn" data-settings-tab="lottery">Lottery</button>
+            <button class="tab-btn" data-settings-tab="prophecy">Prophecy</button>
+        </div>
+
+        <div class="settings-panel active" data-settings-panel="common">
+            <div class="grid-two">
+                <label>Offline Submode
+                    <select id="offline-submode-select">
+                        <option value="aura">Aura</option>
+                        <option value="lottery">Lottery</option>
+                        <option value="prophecy">Prophecy</option>
+                    </select>
+                </label>
+                <label>Foreground Volume (0..100)
+                    <input id="offline-fg-volume" type="number" min="0" max="100" value="60">
+                </label>
+            </div>
+            <div class="row">
+                <button id="offline-save-common-btn" class="primary">Save Common</button>
+            </div>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="aura">
+            <div class="grid-two">
+                <label>Aura Gap (ms)
+                    <input id="offline-aura-gap-ms" type="number" min="0" max="60000" value="1200">
+                </label>
+                <label>Selected Color
+                    <input id="offline-aura-selected-color" type="text" readonly>
+                </label>
+            </div>
+            <div class="row">
+                <label class="grow">Intro Folder
+                    <input id="offline-aura-intro-dir" type="text" value="/sdcard/audio/aura/intro">
+                </label>
+            </div>
+            <div class="row">
+                <label class="grow">Response Folder
+                    <input id="offline-aura-response-dir" type="text" value="/sdcard/audio/aura/response">
+                </label>
+            </div>
+            <div class="row">
+                <button id="offline-save-aura-btn" class="primary">Save Aura</button>
+            </div>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="lottery">
+            <p class="muted">Lottery round starts only by manual command.</p>
+            <div class="row">
+                <button id="offline-lottery-start-btn" class="good">Start Lottery Round</button>
+            </div>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="prophecy">
+            <div class="grid-two">
+                <label>Gap 1 -> 2 (ms)
+                    <input id="offline-prophecy-gap12" type="number" min="0" max="60000">
+                </label>
+                <label>Gap 2 -> 3 (ms)
+                    <input id="offline-prophecy-gap23" type="number" min="0" max="60000">
+                </label>
+                <label>Gap 3 -> 4 (ms)
+                    <input id="offline-prophecy-gap34" type="number" min="0" max="60000">
+                </label>
+                <label>Lead-in Wait (ms)
+                    <input id="offline-prophecy-leadin" type="number" min="0" max="60000">
+                </label>
+                <label>BG Gain (permille)
+                    <input id="offline-prophecy-bg-gain" type="number" min="0" max="2000">
+                </label>
+                <label>BG Fade In (ms)
+                    <input id="offline-prophecy-bg-fade-in" type="number" min="0" max="60000">
+                </label>
+                <label>BG Fade Out (ms)
+                    <input id="offline-prophecy-bg-fade-out" type="number" min="0" max="60000">
+                </label>
+                <label>BG WAV Path
+                    <input id="offline-prophecy-bg-path" type="text" readonly>
+                </label>
+            </div>
+            <div class="row">
+                <button id="offline-save-prophecy-btn" class="primary">Save Prophecy</button>
+            </div>
+        </div>
+    </section>
+
+</div>
+<script src="/assets/js/app.js"></script>
+</body>
+</html>

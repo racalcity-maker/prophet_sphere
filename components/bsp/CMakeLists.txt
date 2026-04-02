@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "bsp_board.c"
+        "bsp_mode_button.c"
+        "bsp_submode_button.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        common
+        app_core
+        freertos
+        esp_driver_gpio
+)

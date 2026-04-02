@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Orb Hybrid</title>
+    <link rel="stylesheet" href="/assets/css/app.css">
+</head>
+<body data-page="hybrid">
+<div class="layout">
+    <header class="top">
+        <h1 class="title">Orb Hybrid Portal</h1>
+        <p class="subtitle">Current mode: hybrid_ai</p>
+    </header>
+
+    <section class="card">
+        <div class="row row-between">
+            <div class="row">
+                <span class="kpi">Mode: <strong id="mode-name">hybrid_ai</strong></span>
+                <span class="kpi">FSM: <strong id="mode-fsm">-</strong></span>
+                <span class="kpi">Session: <strong id="mode-session">IDLE</strong></span>
+            </div>
+            <div class="row">
+                <button id="mode-refresh-btn" class="primary">Refresh</button>
+            </div>
+        </div>
+        <p id="status" class="muted">Ready</p>
+    </section>
+
+    <section class="card">
+        <div class="tabs mode-tabs">
+            <button class="tab-btn active" data-mode-tab="home">Home</button>
+            <button class="tab-btn" data-mode-tab="talk">Talk</button>
+            <button class="tab-btn" data-mode-tab="settings">Settings</button>
+        </div>
+    </section>
+
+    <section class="card mode-panel active" data-mode-panel="home">
+        <h3>Wi-Fi Setup</h3>
+        <p class="muted">Hybrid mode uses network profile and keeps network decisions in service runtime policy.</p>
+        <div class="grid-two">
+            <label>Router SSID
+                <input id="inst-wifi-ssid" type="text" maxlength="32" placeholder="SSID">
+            </label>
+            <label>Router Password
+                <input id="inst-wifi-password" type="password" maxlength="64" placeholder="Password">
+            </label>
+        </div>
+        <div class="row">
+            <button id="inst-wifi-save-btn" class="primary">Connect STA</button>
+        </div>
+        <div class="grid-two">
+            <div class="field-box">
+                <div class="field-title">Network Up</div>
+                <div id="inst-net-up" class="field-value">false</div>
+            </div>
+            <div class="field-box">
+                <div class="field-title">Active Profile</div>
+                <div id="inst-net-active" class="field-value">-</div>
+            </div>
+            <div class="field-box">
+                <div class="field-title">STA IP</div>
+                <div id="inst-net-sta-ip" class="field-value">-</div>
+            </div>
+            <div class="field-box">
+                <div class="field-title">AP IP</div>
+                <div id="inst-net-ap-ip" class="field-value">-</div>
+            </div>
+            <div class="field-box">
+                <div class="field-title">Link State</div>
+                <div id="inst-net-link" class="field-value">-</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="card mode-panel" data-mode-panel="talk">
+        <h3>Talk</h3>
+        <p class="muted">This tab is reserved and not used in hybrid mode.</p>
+    </section>
+
+    <section class="card mode-panel" data-mode-panel="settings">
+        <h3>Settings</h3>
+        <p class="muted">All active hybrid controls are on the Home tab.</p>
+    </section>
+</div>
+<script src="/assets/js/app.js"></script>
+</body>
+</html>

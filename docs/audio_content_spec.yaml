@@ -1,0 +1,162 @@
+version: 1
+project: oracle_orb
+purpose: >
+  Editable content spec for voice/text authoring.
+  Use this file as the single source of truth for folder layout and playback sequences.
+related_files:
+  workbook: docs/audio_content_workbook.yaml
+  note: >
+    Use workbook for day-to-day phrase writing and production tracking.
+
+audio_root:
+  sdcard: /sdcard/audio
+
+hybrid_ai:
+  note: >
+    Hybrid mode is remote-only: ESP handles touch/intro/capture/background and receives
+    recognition + TTS stream from Raspberry.
+    Local service routing is disabled except a single local fail fallback when
+    first remote TTS chunk doesn't arrive in time.
+  intents_primary:
+    - love
+    - money
+    - path
+    - danger
+    - future
+    - inner_state
+    - wish
+    - choice
+    - past
+    - timing
+    - place
+  question_form:
+    allowed:
+      - open
+      - yes_no
+    mapping:
+      yes_no_intent: yes_no
+      time_intent: timing
+      timing_aliases:
+        - time
+        - timing
+      fallback: open
+  service_phrases:
+    start:
+      asset_id: 1301
+      folder: /sdcard/audio/hybrid/start
+      playback: random_no_repeat
+    local_fail_fallback:
+      asset_id: 1303
+      folder: /sdcard/audio/hybrid/fail
+      playback: random_no_repeat
+  sequence:
+    flow:
+      - touch_hold
+      - start_phrase
+      - mic_capture
+      - send_remote_asr_tts_request
+      - first_chunk_timeout_10s: local_fail_fallback
+      - wait_remote_tts_stream
+      - bg_fade_out
+      - return_idle
+    remote:
+      capture_ms_default: 5000
+      first_chunk_timeout_ms: 10000
+      stream_max_ms: 90000
+    oracle_4_phase:
+      phases:
+        - greeting
+        - understanding
+        - prediction
+        - farewell
+      gaps_ms:
+        gap12: 800
+        gap23: 800
+        gap34: 2000
+      bg:
+        fade_in_ms: 2000
+        fade_out_ms: 4000
+        gain_permille: 260
+  oracle_folders:
+    template: /sdcard/audio/oracle/{phase}/{domain}
+    domains:
+      - choice
+      - danger
+      - future
+      - inner_state
+      - love
+      - path
+      - money
+      - wish
+      - yes_no
+      - timing
+    phases:
+      - greeting
+      - understanding
+      - prediction
+      - farewell
+
+desired_file_counts:
+  hybrid_service:
+    start: 8
+    local_fail_fallback: 4
+  oracle_domain_pool:
+    per_domain_per_phase:
+      target: 12
+      minimum: 6
+    domains:
+      - choice
+      - danger
+      - future
+      - inner_state
+      - love
+      - path
+      - money
+      - wish
+      - yes_no
+      - timing
+    phases:
+      - greeting
+      - understanding
+      - prediction
+      - farewell
+  offline:
+    aura:
+      intro: 10
+      response_generic: 12
+      response_per_color: 1
+    grumble: 16
+    lottery:
+      sorting: 10
+      team1: 8
+      team2: 8
+      team3: 8
+      team4: 8
+      finished: 3
+  shared:
+    backgrounds: 4
+
+offline_scripted:
+  aura:
+    intro_folder: /sdcard/audio/aura/intro
+    response_folder: /sdcard/audio/aura/response
+    grumble_folder: /sdcard/audio/grumble
+  lottery:
+    sorting_folder: /sdcard/audio/lottery/sorting
+    team1_folder: /sdcard/audio/lottery/team1
+    team2_folder: /sdcard/audio/lottery/team2
+    team3_folder: /sdcard/audio/lottery/team3
+    team4_folder: /sdcard/audio/lottery/team4
+    finished_file: /sdcard/audio/lottery/finished.mp3
+
+authoring_rules:
+  filenames:
+    format: "{phase}_{index}.mp3"
+    index_example: "01..99"
+  voice_style:
+    hybrid_start: "short invite phrase before capture"
+  loudness_target:
+    integrated_lufs_hint: "-18..-14"
+  lengths_hint_sec:
+    service_phrase: "2..6"
+    oracle_phrase: "4..14"

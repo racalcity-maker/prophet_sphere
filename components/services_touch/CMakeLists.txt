@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "touch_service.c"
+        "touch_task.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        app_core
+        freertos
+        common
+        driver
+)

@@ -1,0 +1,12 @@
+menu "AI Configuration"
+
+config ORB_ENABLE_AI
+    bool "Enable AI service"
+    default y
+
+config ORB_AI_PROMPT_MAX_LEN
+    int "AI prompt max length"
+    range 32 512
+    default 128
+
+endmenu

@@ -1,0 +1,14 @@
+idf_component_register(
+    SRCS
+        "storage_manager.c"
+        "content_index.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        common
+        freertos
+        fatfs
+        sdmmc
+        esp_driver_spi
+        esp_system
+)

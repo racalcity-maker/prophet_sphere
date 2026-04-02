@@ -1,0 +1,223 @@
+menu "Audio Configuration"
+
+choice ORB_AUDIO_DAC_PROFILE
+    prompt "I2S DAC profile"
+    default ORB_AUDIO_DAC_PCM5102A
+
+config ORB_AUDIO_DAC_PCM5102A
+    bool "PCM5102A"
+
+config ORB_AUDIO_DAC_MAX98357A
+    bool "MAX98357A / MAX9xxxx-compatible"
+endchoice
+
+config ORB_AUDIO_I2S_BCLK_GPIO
+    int "I2S BCLK pin"
+    default 18
+
+config ORB_AUDIO_I2S_WS_GPIO
+    int "I2S WS/LRCK pin"
+    default 17
+
+config ORB_AUDIO_I2S_DOUT_GPIO
+    int "I2S DOUT pin"
+    default 16
+
+config ORB_AUDIO_I2S_SAMPLE_RATE_HZ
+    int "I2S sample rate (Hz)"
+    range 8000 96000
+    default 44100
+
+config ORB_AUDIO_I2S_MONO
+    bool "I2S mono output"
+    default y
+
+config ORB_AUDIO_I2S_DMA_DESC_NUM
+    int "I2S DMA descriptor count"
+    range 4 24
+    default 8
+
+config ORB_AUDIO_I2S_DMA_FRAME_NUM
+    int "I2S DMA frame count per descriptor"
+    range 64 1024
+    default 256
+
+config ORB_AUDIO_USE_AMP_ENABLE_GPIO
+    bool "Use amplifier enable GPIO"
+    default y
+
+config ORB_AUDIO_AMP_ENABLE_ACTIVE_HIGH
+    bool "Amplifier enable is active-high"
+    default y
+    depends on ORB_AUDIO_USE_AMP_ENABLE_GPIO
+
+config ORB_AUDIO_DEFAULT_VOLUME
+    int "Default audio volume"
+    range 0 100
+    default 70
+
+config ORB_AUDIO_REAL_MP3_ENABLE
+    bool "Enable real MP3 playback from SD (Helix)"
+    default y
+
+config ORB_AUDIO_ASSET1_PATH
+    string "Asset #1 path"
+    default "/sdcard/1.mp3"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_ASSET2_PATH
+    string "Asset #2 path"
+    default "/sdcard/2.mp3"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_ASSET3_PATH
+    string "Asset #3 path"
+    default "/sdcard/3.mp3"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_GRUMBLE_DIR
+    string "Offline grumble tracks folder"
+    default "/sdcard/audio/grumble"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_LOTTERY_SORTING_DIR
+    string "Offline lottery sorting tracks folder"
+    default "/sdcard/audio/lottery/sorting"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_LOTTERY_TEAM1_DIR
+    string "Offline lottery team #1 tracks folder"
+    default "/sdcard/audio/lottery/team1"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_LOTTERY_TEAM2_DIR
+    string "Offline lottery team #2 tracks folder"
+    default "/sdcard/audio/lottery/team2"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_LOTTERY_TEAM3_DIR
+    string "Offline lottery team #3 tracks folder"
+    default "/sdcard/audio/lottery/team3"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_LOTTERY_TEAM4_DIR
+    string "Offline lottery team #4 tracks folder"
+    default "/sdcard/audio/lottery/team4"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_LOTTERY_FINISHED_PATH
+    string "Offline lottery finished phrase path"
+    default "/sdcard/audio/lottery/finished.mp3"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_PROPHECY_ROOT_DIR
+    string "Offline prophecy root folder"
+    default "/sdcard/audio/oracle"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_HYBRID_START_DIR
+    string "Hybrid intro phrases folder"
+    default "/sdcard/audio/hybrid/start"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_HYBRID_FAIL_DIR
+    string "Hybrid local fail fallback folder"
+    default "/sdcard/audio/hybrid/fail"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_PROPHECY_BG_WAV_PATH
+    string "Prophecy background WAV path"
+    default "/sdcard/audio/backgrounds/oracle.wav"
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_PROPHECY_BG_GAIN_PERMILLE
+    int "Prophecy background gain (permille)"
+    range 10 1000
+    default 260
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_PROPHECY_BG_FADE_IN_MS
+    int "Prophecy background fade-in (ms)"
+    range 0 10000
+    default 2000
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_PROPHECY_BG_FADE_OUT_MS
+    int "Prophecy background fade-out (ms)"
+    range 0 15000
+    default 4000
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_MP3_INPUT_BUFFER_SIZE
+    int "MP3 input buffer size (bytes)"
+    range 2048 32768
+    default 8192
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_MP3_READ_CHUNK_SIZE
+    int "MP3 read chunk size (bytes)"
+    range 256 4096
+    default 2048
+    depends on ORB_AUDIO_REAL_MP3_ENABLE
+
+config ORB_AUDIO_TEST_TONE_ENABLE
+    bool "Enable test tone generator in simulated playback"
+    default y
+
+config ORB_AUDIO_TEST_TONE_FREQ_HZ
+    int "Test tone frequency (Hz)"
+    range 80 4000
+    default 660
+    depends on ORB_AUDIO_TEST_TONE_ENABLE
+
+config ORB_AUDIO_TEST_TONE_LEVEL_PERCENT
+    int "Test tone level (%)"
+    range 1 80
+    default 18
+    depends on ORB_AUDIO_TEST_TONE_ENABLE
+
+config ORB_AUDIO_TEST_TONE_CHUNK_MS
+    int "Test tone chunk size (ms)"
+    range 5 100
+    default 10
+    depends on ORB_AUDIO_TEST_TONE_ENABLE
+
+config ORB_AUDIO_I2S_WRITE_TIMEOUT_MS
+    int "I2S write timeout (ms)"
+    range 0 5000
+    default 0
+
+config ORB_AUDIO_SIM_PLAYBACK_MS
+    int "Simulated playback duration (ms)"
+    range 50 10000
+    default 900
+
+config ORB_AUDIO_REACTIVE_EVENT_ENABLE
+    bool "Publish audio level events for LED reactivity"
+    default y
+
+config ORB_AUDIO_REACTIVE_UPDATE_MS
+    int "Audio level publish period (ms)"
+    range 10 500
+    default 25
+    depends on ORB_AUDIO_REACTIVE_EVENT_ENABLE
+
+config ORB_AUDIO_REACTIVE_LEVEL_SCALE
+    int "Audio level normalization scale (PCM abs units)"
+    range 1000 32767
+    default 7000
+    depends on ORB_AUDIO_REACTIVE_EVENT_ENABLE
+
+config ORB_AUDIO_REACTIVE_NOISE_GATE
+    int "Audio reactive noise gate (0..64)"
+    range 0 64
+    default 5
+    depends on ORB_AUDIO_REACTIVE_EVENT_ENABLE
+
+config ORB_AUDIO_REACTIVE_MIN_SPAN
+    int "Audio reactive adaptive span (metric units)"
+    range 10 2000
+    default 110
+    depends on ORB_AUDIO_REACTIVE_EVENT_ENABLE
+
+endmenu

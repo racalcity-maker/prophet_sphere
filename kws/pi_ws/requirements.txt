@@ -1,0 +1,4 @@
+numpy>=1.26
+websockets>=14.0
+vosk>=0.3.45
+omegaconf>=2.3

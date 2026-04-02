@@ -1,0 +1,64 @@
+menu "Storage Configuration"
+
+config ORB_ENABLE_STORAGE_SD
+    bool "Enable SD card storage service"
+    default y
+
+if ORB_ENABLE_STORAGE_SD
+
+config ORB_STORAGE_AUTO_MOUNT
+    bool "Auto-mount SD on boot"
+    default y
+
+config ORB_STORAGE_MOUNT_POINT
+    string "Mount point"
+    default "/sdcard"
+
+config ORB_STORAGE_MAX_OPEN_FILES
+    int "Max open files"
+    range 1 16
+    default 5
+
+config ORB_STORAGE_FORMAT_IF_MOUNT_FAILED
+    bool "Format SD if mount fails"
+    default n
+
+choice ORB_STORAGE_SPI_HOST
+    prompt "SPI host for SD"
+    default ORB_STORAGE_SPI_HOST_SPI2
+
+config ORB_STORAGE_SPI_HOST_SPI2
+    bool "SPI2_HOST"
+
+config ORB_STORAGE_SPI_HOST_SPI3
+    bool "SPI3_HOST"
+endchoice
+
+config ORB_STORAGE_SPI_MOSI_GPIO
+    int "SD SPI MOSI GPIO"
+    default 11
+
+config ORB_STORAGE_SPI_MISO_GPIO
+    int "SD SPI MISO GPIO"
+    default 13
+
+config ORB_STORAGE_SPI_SCLK_GPIO
+    int "SD SPI SCLK GPIO"
+    default 12
+
+config ORB_STORAGE_SPI_CS_GPIO
+    int "SD SPI CS GPIO"
+    default 10
+
+config ORB_STORAGE_SPI_CLOCK_KHZ
+    int "SD SPI clock (kHz)"
+    range 400 40000
+    default 10000
+
+config ORB_STORAGE_READ_ONLY
+    bool "Mount SD as read-only"
+    default n
+
+endif
+
+endmenu
