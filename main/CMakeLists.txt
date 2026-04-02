@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+    REQUIRES
+        nvs_flash
+        bsp
+        common
+        app_core
+        service_runtime
+        services_config
+        services_web
+        services_ota
+)

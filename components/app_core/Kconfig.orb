@@ -1,0 +1,291 @@
+menu "Mode Configuration"
+
+choice ORB_DEFAULT_MODE
+    prompt "Default mode"
+    default ORB_DEFAULT_MODE_HYBRID_AI
+
+config ORB_DEFAULT_MODE_OFFLINE_SCRIPTED
+    bool "offline_scripted"
+
+config ORB_DEFAULT_MODE_HYBRID_AI
+    bool "hybrid_ai"
+
+config ORB_DEFAULT_MODE_INSTALLATION_SLAVE
+    bool "installation_slave"
+endchoice
+
+config ORB_MODE_SWITCH_TIMEOUT_MS
+    int "Mode switch timeout (ms)"
+    range 10 30000
+    default 1500
+
+config ORB_OFFLINE_COOLDOWN_MS
+    int "Offline session cooldown (ms)"
+    range 100 30000
+    default 1200
+
+config ORB_HYBRID_REJECT_THRESHOLD_PERMILLE
+    int "Hybrid speech reject threshold (permille)"
+    range 0 1000
+    default 380
+    help
+        Threshold used when local reject policy is enabled.
+        Remote-only hybrid flow can ignore this parameter.
+
+config ORB_HYBRID_MIC_CAPTURE_DEFAULT_MS
+    int "Hybrid microphone capture default (ms)"
+    range 1000 60000
+    default 5000
+    help
+        Default microphone capture duration used by hybrid mode.
+        Runtime config can override this value.
+
+config ORB_AURA_TRACK1_ASSET_ID
+    int "Aura mode track #1 asset id"
+    range 1 65535
+    default 1
+
+config ORB_AURA_TRACK2_ASSET_ID
+    int "Aura mode track #2 asset id"
+    range 1 65535
+    default 2
+
+config ORB_AURA_TRACK_GAP_MS
+    int "Aura mode gap between track #1 and #2 (ms)"
+    range 0 30000
+    default 1200
+
+config ORB_OFFLINE_GRUMBLE_ENABLE
+    bool "Enable offline idle grumble reactions"
+    default y
+    help
+        In offline aura submode, repeated touch-down events in idle can
+        probabilistically trigger a short "grumble" voice line.
+
+config ORB_OFFLINE_GRUMBLE_ASSET_ID
+    int "Offline grumble audio asset id"
+    range 1 65535
+    default 3
+    depends on ORB_OFFLINE_GRUMBLE_ENABLE
+
+config ORB_OFFLINE_GRUMBLE_MIN_TOUCHES
+    int "Offline grumble minimum touches in window"
+    range 1 50
+    default 3
+    depends on ORB_OFFLINE_GRUMBLE_ENABLE
+
+config ORB_OFFLINE_GRUMBLE_WINDOW_MS
+    int "Offline grumble touch window (ms)"
+    range 200 120000
+    default 6000
+    depends on ORB_OFFLINE_GRUMBLE_ENABLE
+
+config ORB_OFFLINE_GRUMBLE_COOLDOWN_MS
+    int "Offline grumble cooldown (ms)"
+    range 500 300000
+    default 20000
+    depends on ORB_OFFLINE_GRUMBLE_ENABLE
+
+config ORB_OFFLINE_GRUMBLE_BASE_PROB_PCT
+    int "Offline grumble base probability (%)"
+    range 0 100
+    default 15
+    depends on ORB_OFFLINE_GRUMBLE_ENABLE
+
+config ORB_OFFLINE_GRUMBLE_STEP_PROB_PCT
+    int "Offline grumble probability step per extra touch (%)"
+    range 0 100
+    default 10
+    depends on ORB_OFFLINE_GRUMBLE_ENABLE
+
+config ORB_OFFLINE_GRUMBLE_MAX_PROB_PCT
+    int "Offline grumble maximum probability (%)"
+    range 0 100
+    default 65
+    depends on ORB_OFFLINE_GRUMBLE_ENABLE
+
+config ORB_OFFLINE_GRUMBLE_FADE_OUT_MS
+    int "Offline grumble LED fade-out duration (ms)"
+    range 50 5000
+    default 900
+    depends on ORB_OFFLINE_GRUMBLE_ENABLE
+
+config ORB_OFFLINE_LOTTERY_TEAMS_COUNT
+    int "Offline lottery teams count"
+    range 2 4
+    default 4
+
+config ORB_OFFLINE_LOTTERY_PARTICIPANTS_TOTAL
+    int "Offline lottery participants per round"
+    range 1 128
+    default 17
+
+config ORB_OFFLINE_LOTTERY_TOUCH_DEBOUNCE_MS
+    int "Offline lottery touch debounce for sorting start (ms)"
+    range 50 3000
+    default 260
+
+config ORB_OFFLINE_LOTTERY_TRIGGER_DEBOUNCE_MS
+    int "Offline lottery trigger cooldown after assignment (ms)"
+    range 0 5000
+    default 450
+
+config ORB_OFFLINE_LOTTERY_RESULT_COOLDOWN_MS
+    int "Offline lottery result cooldown (ms)"
+    range 100 10000
+    default 1200
+
+config ORB_OFFLINE_LOTTERY_SCENE_IDLE_ID
+    int "Offline lottery idle scene id"
+    range 1 255
+    default 10
+
+config ORB_OFFLINE_LOTTERY_SCENE_SORTING_ID
+    int "Offline lottery sorting scene id"
+    range 1 255
+    default 11
+
+config ORB_OFFLINE_LOTTERY_SCENE_RESULT_ID
+    int "Offline lottery result scene id"
+    range 1 255
+    default 8
+
+config ORB_OFFLINE_PROPHECY_SCENE_IDLE_ID
+    int "Offline prophecy idle scene id"
+    range 1 255
+    default 4
+
+config ORB_OFFLINE_PROPHECY_SCENE_ACTIVE_ID
+    int "Offline prophecy active scene id"
+    range 1 255
+    default 5
+
+config ORB_OFFLINE_PROPHECY_SCENE_COOLDOWN_ID
+    int "Offline prophecy cooldown scene id"
+    range 1 255
+    default 1
+
+config ORB_OFFLINE_PROPHECY_COOLDOWN_MS
+    int "Offline prophecy cooldown (ms)"
+    range 100 30000
+    default 1500
+
+endmenu
+
+menu "Logging Configuration"
+
+config ORB_TOUCH_ONLY_LOG_MODE
+    bool "Touch-only INFO logs after startup (others WARN)"
+    default y
+    help
+        Reduces runtime log noise for touch bring-up:
+        keeps touch_service at INFO and sets all other tags to WARN.
+
+config ORB_MEM_MONITOR_ENABLE
+    bool "Enable periodic memory monitor logs"
+    default y
+    help
+        Logs free heap and largest free block for total heap, internal SRAM,
+        and PSRAM at fixed intervals.
+
+config ORB_MEM_MONITOR_PERIOD_MS
+    int "Memory monitor period (ms)"
+    range 1000 3600000
+    default 60000
+    depends on ORB_MEM_MONITOR_ENABLE
+
+endmenu
+
+menu "Tasking and Queue Configuration"
+
+config ORB_APP_CONTROL_TASK_STACK_SIZE
+    int "app_control_task stack size"
+    range 2048 16384
+    default 6144
+
+config ORB_APP_CONTROL_TASK_PRIORITY
+    int "app_control_task priority"
+    range 1 24
+    default 10
+
+config ORB_TOUCH_TASK_STACK_SIZE
+    int "touch_task stack size"
+    range 2048 12288
+    default 3072
+
+config ORB_TOUCH_TASK_PRIORITY
+    int "touch_task priority"
+    range 1 24
+    default 8
+
+config ORB_LED_TASK_STACK_SIZE
+    int "led_task stack size"
+    range 2048 12288
+    default 3072
+
+config ORB_LED_TASK_PRIORITY
+    int "led_task priority"
+    range 1 24
+    default 7
+
+config ORB_AUDIO_TASK_STACK_SIZE
+    int "audio_task stack size"
+    range 4096 32768
+    default 16384
+
+config ORB_AUDIO_TASK_PRIORITY
+    int "audio_task priority"
+    range 1 24
+    default 8
+
+config ORB_AI_TASK_STACK_SIZE
+    int "ai_task stack size"
+    range 2048 16384
+    default 6144
+
+config ORB_AI_TASK_PRIORITY
+    int "ai_task priority"
+    range 1 24
+    default 8
+
+config ORB_APP_EVENT_QUEUE_LENGTH
+    int "app event queue length"
+    range 4 128
+    default 24
+
+config ORB_LED_COMMAND_QUEUE_LENGTH
+    int "LED command queue length"
+    range 4 128
+    default 16
+
+config ORB_AUDIO_COMMAND_QUEUE_LENGTH
+    int "Audio command queue length"
+    range 4 128
+    default 16
+
+config ORB_AI_COMMAND_QUEUE_LENGTH
+    int "AI command queue length"
+    range 4 128
+    default 8
+
+config ORB_QUEUE_SEND_TIMEOUT_MS
+    int "Queue send timeout (ms)"
+    range 1 10000
+    default 50
+
+config ORB_QUEUE_RECV_TIMEOUT_MS
+    int "Queue receive timeout (ms)"
+    range 1 10000
+    default 100
+
+config ORB_AUDIO_STOP_TIMEOUT_MS
+    int "Audio stop timeout (ms)"
+    range 10 30000
+    default 1000
+
+config ORB_AI_REQUEST_TIMEOUT_MS
+    int "AI request timeout (ms)"
+    range 10 60000
+    default 5000
+
+endmenu

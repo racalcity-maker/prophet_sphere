@@ -1,0 +1,177 @@
+menu "Microphone Configuration"
+
+config ORB_ENABLE_MIC
+    bool "Enable microphone service (INMP441 I2S RX)"
+    default y
+
+config ORB_MIC_I2S_PORT
+    int "Microphone I2S port"
+    range 0 1
+    default 1
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_I2S_BCLK_GPIO
+    int "Microphone I2S BCLK pin"
+    range 0 48
+    default 6
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_I2S_WS_GPIO
+    int "Microphone I2S WS/LRCK pin"
+    range 0 48
+    default 7
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_I2S_DIN_GPIO
+    int "Microphone I2S DIN pin"
+    range 0 48
+    default 8
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_I2S_USE_RIGHT_SLOT
+    bool "Read right channel slot (otherwise left)"
+    default n
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_SAMPLE_RATE_HZ
+    int "Microphone sample rate (Hz)"
+    range 8000 48000
+    default 16000
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_I2S_DMA_DESC_NUM
+    int "Microphone I2S DMA descriptor count"
+    range 4 24
+    default 8
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_I2S_DMA_FRAME_NUM
+    int "Microphone I2S DMA frame count per descriptor"
+    range 64 1024
+    default 256
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_TASK_STACK_SIZE
+    int "mic_task stack size"
+    range 3072 16384
+    default 10240
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_TASK_PRIORITY
+    int "mic_task priority"
+    range 1 24
+    default 8
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_TASK_CORE
+    int "mic_task core (0/1)"
+    range 0 1
+    default 0
+    depends on ORB_ENABLE_MIC && !FREERTOS_UNICORE
+    help
+        Core affinity for I2S capture/state task. Recommended: core 0.
+
+config ORB_MIC_COMMAND_QUEUE_LENGTH
+    int "Microphone command queue length"
+    range 2 32
+    default 8
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_CAPTURE_DEFAULT_MS
+    int "Default microphone capture duration (ms)"
+    range 100 60000
+    default 4000
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_READ_CHUNK_SAMPLES
+    int "Microphone read chunk (samples)"
+    range 64 1024
+    default 256
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_READ_TIMEOUT_MS
+    int "Microphone I2S read timeout (ms)"
+    range 1 1000
+    default 30
+    depends on ORB_ENABLE_MIC
+
+config ORB_MIC_ACTIVE_LOOP_DELAY_MS
+    int "mic_task active-loop delay (ms)"
+    range 0 20
+    default 1
+    depends on ORB_ENABLE_MIC
+    help
+        Small cooperative delay while capture is active. Prevents mic_task
+        from starving IDLE task on dual-core under sustained I2S readiness.
+        Set to 0 to use taskYIELD() only.
+
+config ORB_MIC_INPUT_SHIFT
+    int "Microphone sample shift to PCM16 domain"
+    range 4 16
+    default 13
+    depends on ORB_ENABLE_MIC
+    help
+        INMP441 delivers 24-bit samples. This shift converts raw I2S sample
+        values into a PCM16-like range used for level metrics.
+
+config ORB_MIC_WS_ENABLE
+    bool "Enable WebSocket streaming for mic capture"
+    default y
+    depends on ORB_ENABLE_MIC
+    help
+        When enabled, mic_task streams captured PCM16 chunks to an external
+        WebSocket server (for example Raspberry Pi speech service) and can
+        consume intent classification result from the server.
+
+config ORB_MIC_WS_URL
+    string "Mic WebSocket URL"
+    default "ws://192.168.4.2:8765/mic"
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+config ORB_MIC_WS_CONNECT_TIMEOUT_MS
+    int "Mic WebSocket connect timeout (ms)"
+    range 100 10000
+    default 1500
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+config ORB_MIC_WS_SEND_TIMEOUT_MS
+    int "Mic WebSocket send timeout (ms)"
+    range 1 1000
+    default 200
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+config ORB_MIC_WS_SEND_RETRY_COUNT
+    int "Mic WebSocket send retries"
+    range 0 10
+    default 6
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+config ORB_MIC_WS_SEND_RETRY_BACKOFF_MS
+    int "Mic WebSocket send retry backoff (ms)"
+    range 1 200
+    default 20
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+config ORB_MIC_WS_RESULT_TIMEOUT_MS
+    int "Mic WebSocket result timeout after capture end (ms)"
+    range 50 10000
+    default 2000
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+config ORB_MIC_WS_LOG_RESULTS
+    bool "Log raw WebSocket intent payload"
+    default n
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+config ORB_MIC_WS_TTS_TIMEOUT_MS
+    int "Mic WS TTS stream timeout (ms)"
+    range 1000 60000
+    default 15000
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+config ORB_MIC_WS_TTS_VOICE
+    string "Mic WS TTS voice hint"
+    default "ruslan"
+    depends on ORB_ENABLE_MIC && ORB_MIC_WS_ENABLE
+
+endmenu

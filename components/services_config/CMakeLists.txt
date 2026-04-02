@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "config_defaults.c"
+        "config_store_nvs.c"
+        "config_manager.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        freertos
+        common
+        nvs_flash
+)

@@ -1,0 +1,33 @@
+#ifndef LOG_TAGS_H
+#define LOG_TAGS_H
+
+#define LOG_TAG_APP_MAIN "app_main"
+#define LOG_TAG_APP_TASKING "app_tasking"
+#define LOG_TAG_APP_FSM "app_fsm"
+#define LOG_TAG_SERVICE_RUNTIME "service_runtime"
+#define LOG_TAG_MODE_MANAGER "mode_manager"
+#define LOG_TAG_SESSION_CTRL "session_ctrl"
+#define LOG_TAG_BSP "bsp"
+#define LOG_TAG_CONFIG "config_manager"
+#define LOG_TAG_STORAGE "storage_manager"
+#define LOG_TAG_TOUCH "touch_service"
+#define LOG_TAG_LED "led_service"
+#define LOG_TAG_AUDIO "audio_service"
+#define LOG_TAG_AUDIO_I2S "audio_i2s"
+#define LOG_TAG_NETWORK "network_manager"
+#define LOG_TAG_MQTT "mqtt_service"
+#define LOG_TAG_AI "ai_client"
+#define LOG_TAG_PROMPT "prompt_engine"
+#define LOG_TAG_MIC "mic_service"
+#define LOG_TAG_MIC_I2S "mic_i2s"
+#define LOG_TAG_WEB "web_server"
+#define LOG_TAG_REST "rest_api"
+#define LOG_TAG_OTA "ota_service"
+#define LOG_TAG_MODE_BUTTON "mode_button"
+#define LOG_TAG_SUBMODE_BUTTON "submode_button"
+#define LOG_TAG_MODE_OFFLINE "mode_offline"
+#define LOG_TAG_MODE_HYBRID "mode_hybrid"
+#define LOG_TAG_MODE_INSTALL "mode_install"
+#define LOG_TAG_MEM_MON "mem_monitor"
+
+#endif

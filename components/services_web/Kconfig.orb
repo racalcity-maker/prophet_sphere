@@ -1,0 +1,47 @@
+menu "Web Configuration"
+
+config ORB_ENABLE_WEB
+    bool "Enable web service"
+    default y
+    depends on ORB_ENABLE_NETWORK
+
+config ORB_WEB_PORT
+    int "Web server port"
+    range 1 65535
+    default 80
+
+config ORB_WEB_MAX_URI_HANDLERS
+    int "HTTP max URI handlers"
+    range 16 96
+    default 40
+    depends on ORB_ENABLE_WEB
+    help
+        Must be >= number of registered portal + REST routes.
+        If too small, web server start fails with ESP_ERR_HTTPD_HANDLERS_FULL.
+
+config ORB_WEB_SERVER_STACK_SIZE
+    int "HTTP server task stack size"
+    range 4096 16384
+    default 8192
+    depends on ORB_ENABLE_WEB
+    help
+        Increase this if REST handlers use larger JSON payloads.
+
+config ORB_WEB_USE_PSRAM_BUFFERS
+    bool "Allocate web response buffers in PSRAM first"
+    default y
+    depends on ORB_ENABLE_WEB
+    help
+        When enabled, shared JSON buffers are allocated from PSRAM first
+        and fall back to internal RAM if unavailable.
+
+config ORB_WEB_SHARED_JSON_BUF_SIZE
+    int "Shared JSON buffer size (bytes)"
+    range 2048 16384
+    default 8192
+    depends on ORB_ENABLE_WEB
+    help
+        Shared response buffer used by status/config/network/offline handlers.
+        Increase if JSON responses grow.
+
+endmenu

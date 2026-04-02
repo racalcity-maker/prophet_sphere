@@ -1,0 +1,20 @@
+idf_component_register(
+    SRCS
+        "service_runtime.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        freertos
+        common
+        app_core
+        services_touch
+        services_led
+        services_audio
+        services_mic
+        services_ai
+        services_storage
+        services_network
+        services_mqtt
+        services_web
+        services_ota
+)
