@@ -4,7 +4,9 @@
 #include "sdkconfig.h"
 #include "app_control_task.h"
 #include "app_fsm.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_memory_utils.h"
 #include "freertos/portmacro.h"
 #include "freertos/task.h"
 #include "log_tags.h"
@@ -16,6 +18,8 @@ static QueueHandle_t s_led_cmd_queue;
 static QueueHandle_t s_audio_cmd_queue;
 static QueueHandle_t s_ai_cmd_queue;
 static QueueHandle_t s_mic_cmd_queue;
+static StaticQueue_t s_audio_cmd_queue_static_ctrl;
+static uint8_t *s_audio_cmd_queue_storage;
 static portMUX_TYPE s_timer_pending_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t s_timer_pending_mask;
 
@@ -56,6 +60,10 @@ static void cleanup_queues(void)
         vQueueDelete(s_audio_cmd_queue);
         s_audio_cmd_queue = NULL;
     }
+    if (s_audio_cmd_queue_storage != NULL) {
+        heap_caps_free(s_audio_cmd_queue_storage);
+        s_audio_cmd_queue_storage = NULL;
+    }
     if (s_ai_cmd_queue != NULL) {
         vQueueDelete(s_ai_cmd_queue);
         s_ai_cmd_queue = NULL;
@@ -67,6 +75,36 @@ static void cleanup_queues(void)
     portENTER_CRITICAL(&s_timer_pending_lock);
     s_timer_pending_mask = 0U;
     portEXIT_CRITICAL(&s_timer_pending_lock);
+}
+
+static QueueHandle_t create_audio_queue(void)
+{
+    const size_t storage_size =
+        (size_t)CONFIG_ORB_AUDIO_COMMAND_QUEUE_LENGTH * sizeof(audio_command_t);
+
+    uint8_t *storage = (uint8_t *)heap_caps_malloc(storage_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (storage == NULL) {
+        storage = (uint8_t *)heap_caps_malloc(storage_size, MALLOC_CAP_8BIT);
+    }
+
+    if (storage != NULL) {
+        QueueHandle_t q = xQueueCreateStatic(CONFIG_ORB_AUDIO_COMMAND_QUEUE_LENGTH,
+                                             sizeof(audio_command_t),
+                                             storage,
+                                             &s_audio_cmd_queue_static_ctrl);
+        if (q != NULL) {
+            s_audio_cmd_queue_storage = storage;
+            ESP_LOGI(TAG,
+                     "audio queue storage=%u bytes placed in %s memory",
+                     (unsigned)storage_size,
+                     esp_ptr_external_ram(storage) ? "PSRAM" : "internal");
+            return q;
+        }
+        heap_caps_free(storage);
+    }
+
+    s_audio_cmd_queue_storage = NULL;
+    return xQueueCreate(CONFIG_ORB_AUDIO_COMMAND_QUEUE_LENGTH, sizeof(audio_command_t));
 }
 
 static esp_err_t send_to_queue(QueueHandle_t queue, const void *item, uint32_t timeout_ms)
@@ -100,7 +138,7 @@ esp_err_t app_tasking_init(void)
 
     QueueHandle_t app_q = xQueueCreate(CONFIG_ORB_APP_EVENT_QUEUE_LENGTH, sizeof(app_event_t));
     QueueHandle_t led_q = xQueueCreate(CONFIG_ORB_LED_COMMAND_QUEUE_LENGTH, sizeof(led_command_t));
-    QueueHandle_t audio_q = xQueueCreate(CONFIG_ORB_AUDIO_COMMAND_QUEUE_LENGTH, sizeof(audio_command_t));
+    QueueHandle_t audio_q = create_audio_queue();
     QueueHandle_t ai_q = xQueueCreate(CONFIG_ORB_AI_COMMAND_QUEUE_LENGTH, sizeof(ai_command_t));
     QueueHandle_t mic_q = xQueueCreate(CONFIG_ORB_MIC_COMMAND_QUEUE_LENGTH, sizeof(mic_command_t));
 
@@ -113,6 +151,10 @@ esp_err_t app_tasking_init(void)
         }
         if (audio_q != NULL) {
             vQueueDelete(audio_q);
+        }
+        if (s_audio_cmd_queue_storage != NULL) {
+            heap_caps_free(s_audio_cmd_queue_storage);
+            s_audio_cmd_queue_storage = NULL;
         }
         if (ai_q != NULL) {
             vQueueDelete(ai_q);

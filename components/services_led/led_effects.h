@@ -14,6 +14,13 @@ typedef struct {
     uint8_t aura_g;
     uint8_t aura_b;
     uint8_t aura_level;
+    uint16_t idle_v_q8;
+    uint16_t hybrid_idle_v_q8;
+    uint16_t hybrid_touch_v_q8;
+    uint32_t hybrid_idle_hue_cycle;
+    uint32_t hybrid_touch_hue_cycle;
+    uint8_t hybrid_idle_hue;
+    uint8_t hybrid_touch_hue;
     uint32_t rng_state;
 } led_effects_state_t;
 

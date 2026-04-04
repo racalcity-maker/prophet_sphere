@@ -81,6 +81,32 @@ static uint16_t sine_wave_u16(uint32_t now_ms, uint32_t period_ms)
     return (v > 65535U) ? 65535U : (uint16_t)v;
 }
 
+static uint16_t hybrid_breathe_wave_u16(uint32_t now_ms, uint32_t period_ms)
+{
+    if (period_ms < 2U) {
+        return 65535U;
+    }
+
+    const float phase = (float)(now_ms % period_ms) / (float)period_ms; /* [0..1) */
+    float n = 0.0f;
+    if (phase < 0.5f) {
+        /* Rise: leave dark region quickly, then ease into peak. */
+        const float x = phase * 2.0f;
+        n = 1.0f - powf(1.0f - x, 1.75f);
+    } else {
+        /* Fall: stay bright longer, then accelerate hard near floor. */
+        const float x = (phase - 0.5f) * 2.0f;
+        n = 1.0f - (x * x * x);
+    }
+
+    if (n < 0.018f) {
+        n = 0.0f; /* keep floor truly dark to avoid visible low-end stepping */
+    }
+
+    uint32_t v = (uint32_t)(n * 65535.0f + 0.5f);
+    return (v > 65535U) ? 65535U : (uint16_t)v;
+}
+
 static uint8_t cycle_hue_random(uint32_t now_ms, uint32_t period_ms, uint32_t seed)
 {
     if (period_ms == 0U) {
@@ -90,39 +116,90 @@ static uint8_t cycle_hue_random(uint32_t now_ms, uint32_t period_ms, uint32_t se
     return (uint8_t)(hash_u32(cycle_idx + seed) & 0xFFU);
 }
 
+static uint8_t cycle_hue_latched_at_floor(uint32_t now_ms,
+                                          uint32_t period_ms,
+                                          uint32_t seed,
+                                          uint16_t wave_target_q8,
+                                          uint32_t *latched_cycle,
+                                          uint8_t *latched_hue)
+{
+    if (period_ms == 0U || latched_cycle == NULL || latched_hue == NULL) {
+        return (uint8_t)(hash_u32(seed) & 0xFFU);
+    }
+
+    uint32_t cycle_idx = now_ms / period_ms;
+    if (*latched_cycle == UINT32_MAX) {
+        *latched_cycle = cycle_idx;
+        *latched_hue = (uint8_t)(hash_u32(cycle_idx + seed) & 0xFFU);
+        return *latched_hue;
+    }
+
+    if (cycle_idx != *latched_cycle && wave_target_q8 <= (2U << 8)) {
+        *latched_cycle = cycle_idx;
+        *latched_hue = (uint8_t)(hash_u32(cycle_idx + seed) & 0xFFU);
+    }
+    return *latched_hue;
+}
+
 static uint8_t smooth_q8_to_u8_dither(uint16_t *state_q8, uint16_t target_q8, uint32_t now_ms, uint8_t seed)
 {
     if (state_q8 == NULL) {
         return (uint8_t)(target_q8 >> 8);
     }
 
-    if (target_q8 <= 128U) {
-        /* Near breathing floor: snap to bottom so hue switch happens at (almost) zero light. */
-        *state_q8 = target_q8;
-    } else if (*state_q8 == 0U) {
-        *state_q8 = target_q8;
-    } else {
-        int32_t diff = (int32_t)target_q8 - (int32_t)(*state_q8);
-        uint8_t target_u8 = (uint8_t)(target_q8 >> 8);
-        /* Adaptive slew:
-         * brighter target -> slower motion,
-         * darker target -> faster motion. */
-        int32_t divisor = 3 + ((int32_t)target_u8 * 7) / 255; /* [3..10] */
-        int32_t step = diff / divisor;
-        if (step == 0 && diff != 0) {
+    if (target_q8 <= (3U << 8)) {
+        target_q8 = 0U;
+    }
+
+    int32_t diff = (int32_t)target_q8 - (int32_t)(*state_q8);
+    if (diff != 0) {
+        uint8_t state_u8 = (uint8_t)((*state_q8) >> 8);
+        uint16_t alpha_q8 = 160U;
+        if (diff > 0) {
+            /* Rise: quick near floor, slower near peak. */
+            if (state_u8 < 20U) {
+                alpha_q8 = 224U;
+            } else if (state_u8 < 80U) {
+                alpha_q8 = 182U;
+            } else {
+                alpha_q8 = 142U;
+            }
+        } else {
+            /* Fall: accelerate strongly as we approach zero. */
+            if (state_u8 < 20U) {
+                alpha_q8 = 255U;
+            } else if (state_u8 < 64U) {
+                alpha_q8 = 236U;
+            } else if (state_u8 < 132U) {
+                alpha_q8 = 204U;
+            } else {
+                alpha_q8 = 170U;
+            }
+        }
+
+        int32_t step = (diff * (int32_t)alpha_q8) / 256;
+        if (step == 0) {
             step = (diff > 0) ? 1 : -1;
         }
+
         int32_t next = (int32_t)(*state_q8) + step;
         if (next < 0) {
             next = 0;
         } else if (next > 65535) {
             next = 65535;
         }
+
+        if (diff > -96 && diff < 96) {
+            next = (int32_t)target_q8;
+        }
         *state_q8 = (uint16_t)next;
     }
 
     uint8_t out = (uint8_t)((*state_q8) >> 8);
     uint8_t frac = (uint8_t)(*state_q8 & 0xFFU);
+    if (out == 0U && frac < 48U) {
+        return 0U;
+    }
     uint8_t threshold = (uint8_t)((now_ms * 29U + (uint32_t)seed * 53U) & 0xFFU);
     if (frac > threshold && out < 255U) {
         out++;
@@ -227,16 +304,22 @@ void led_effects_reset_state(led_effects_state_t *state, uint32_t seed)
     state->aura_g = 64U;
     state->aura_b = 255U;
     state->aura_level = 0U;
+    state->idle_v_q8 = 0U;
+    state->hybrid_idle_v_q8 = 0U;
+    state->hybrid_touch_v_q8 = 0U;
+    state->hybrid_idle_hue_cycle = UINT32_MAX;
+    state->hybrid_touch_hue_cycle = UINT32_MAX;
+    state->hybrid_idle_hue = 0U;
+    state->hybrid_touch_hue = 0U;
     state->rng_state = (seed == 0U) ? 0xC0FFEE11U : (seed ^ 0x9E3779B9U);
 }
 
-static void render_idle_breathe(uint32_t now_ms, uint8_t brightness, led_effects_fill_fn fill_color, void *ctx)
+static void render_idle_breathe(led_effects_state_t *state, uint32_t now_ms, uint8_t brightness, led_effects_fill_fn fill_color, void *ctx)
 {
     const uint32_t period_ms = (uint32_t)CONFIG_ORB_LED_BREATHE_PERIOD_MS;
-    static uint16_t v_q8 = 0U;
     uint16_t wave_u16 = sine_wave_u16(now_ms, period_ms);
     uint16_t v_target_q8 = (uint16_t)(((uint32_t)196U * (uint32_t)wave_u16) / 256U);
-    uint8_t v = smooth_q8_to_u8_dither(&v_q8, v_target_q8, now_ms, 0x41U);
+    uint8_t v = smooth_q8_to_u8_dither(&state->idle_v_q8, v_target_q8, now_ms, 0x41U);
     uint8_t hue = cycle_hue_random(now_ms, period_ms, 0x11U);
     uint8_t r = 0U;
     uint8_t g = 0U;
@@ -250,33 +333,43 @@ static void render_touch_awake(uint8_t brightness, led_effects_fill_fn fill_colo
     fill_color(36U, 72U, 120U, brightness, ctx);
 }
 
-static void render_hybrid_idle_slow_breathe(uint32_t now_ms, uint8_t brightness, led_effects_fill_fn fill_color, void *ctx)
+static void render_hybrid_idle_slow_breathe(led_effects_state_t *state,
+                                            uint32_t now_ms,
+                                            uint8_t brightness,
+                                            led_effects_fill_fn fill_color,
+                                            void *ctx)
 {
     const uint32_t period_ms = 7800U;
-    static uint16_t v_q8 = 0U;
-    uint16_t wave_u16 = sine_wave_u16(now_ms, period_ms);
+    uint16_t wave_u16 = hybrid_breathe_wave_u16(now_ms, period_ms);
     uint16_t v_target_q8 = (uint16_t)(((uint32_t)176U * (uint32_t)wave_u16) / 256U);
-    uint8_t v = smooth_q8_to_u8_dither(&v_q8, v_target_q8, now_ms, 0x57U);
-    uint8_t hue = cycle_hue_random(now_ms, period_ms, 0x27U);
+    uint8_t v = smooth_q8_to_u8_dither(&state->hybrid_idle_v_q8, v_target_q8, now_ms, 0x57U);
+    uint8_t hue =
+        cycle_hue_latched_at_floor(now_ms, period_ms, 0x27U, v_target_q8, &state->hybrid_idle_hue_cycle, &state->hybrid_idle_hue);
+    uint8_t sat = (uint8_t)(236U + ((uint16_t)v * 19U) / 255U); /* keep vivid color on brightness peaks */
     uint8_t r = 0U;
     uint8_t g = 0U;
     uint8_t b = 0U;
-    hsv_to_rgb_u8(hue, 210U, v, &r, &g, &b);
+    hsv_to_rgb_u8(hue, sat, v, &r, &g, &b);
     fill_color(r, g, b, brightness, ctx);
 }
 
-static void render_hybrid_touch_fast_breathe(uint32_t now_ms, uint8_t brightness, led_effects_fill_fn fill_color, void *ctx)
+static void render_hybrid_touch_fast_breathe(led_effects_state_t *state,
+                                             uint32_t now_ms,
+                                             uint8_t brightness,
+                                             led_effects_fill_fn fill_color,
+                                             void *ctx)
 {
     const uint32_t period_ms = 1400U;
-    static uint16_t v_q8 = 0U;
-    uint16_t wave_u16 = sine_wave_u16(now_ms, period_ms);
+    uint16_t wave_u16 = hybrid_breathe_wave_u16(now_ms, period_ms);
     uint16_t v_target_q8 = (uint16_t)(((uint32_t)210U * (uint32_t)wave_u16) / 256U);
-    uint8_t v = smooth_q8_to_u8_dither(&v_q8, v_target_q8, now_ms, 0x73U);
-    uint8_t hue = cycle_hue_random(now_ms, period_ms, 0x39U);
+    uint8_t v = smooth_q8_to_u8_dither(&state->hybrid_touch_v_q8, v_target_q8, now_ms, 0x73U);
+    uint8_t hue = cycle_hue_latched_at_floor(
+        now_ms, period_ms, 0x39U, v_target_q8, &state->hybrid_touch_hue_cycle, &state->hybrid_touch_hue);
+    uint8_t sat = (uint8_t)(242U + ((uint16_t)v * 13U) / 255U); /* stronger saturation for fast touch pulse */
     uint8_t r = 0U;
     uint8_t g = 0U;
     uint8_t b = 0U;
-    hsv_to_rgb_u8(hue, 220U, v, &r, &g, &b);
+    hsv_to_rgb_u8(hue, sat, v, &r, &g, &b);
     fill_color(r, g, b, brightness, ctx);
 }
 
@@ -558,10 +651,10 @@ void led_effects_render_scene(led_scene_id_t scene_id,
         render_lottery_hold_ramp(scene_elapsed_ms, brightness, fill_color, ctx);
         break;
     case LED_SCENE_HYBRID_IDLE_SLOW_BREATHE:
-        render_hybrid_idle_slow_breathe(now_ms, brightness, fill_color, ctx);
+        render_hybrid_idle_slow_breathe(state, now_ms, brightness, fill_color, ctx);
         break;
     case LED_SCENE_HYBRID_TOUCH_FAST_BREATHE:
-        render_hybrid_touch_fast_breathe(now_ms, brightness, fill_color, ctx);
+        render_hybrid_touch_fast_breathe(state, now_ms, brightness, fill_color, ctx);
         break;
     case LED_SCENE_HYBRID_VORTEX:
         render_hybrid_vortex(state, now_ms, brightness, set_pixel, ctx, false);
@@ -571,7 +664,7 @@ void led_effects_render_scene(led_scene_id_t scene_id,
         break;
     case LED_SCENE_IDLE_BREATHE:
     default:
-        render_idle_breathe(now_ms, brightness, fill_color, ctx);
+        render_idle_breathe(state, now_ms, brightness, fill_color, ctx);
         break;
     }
 }

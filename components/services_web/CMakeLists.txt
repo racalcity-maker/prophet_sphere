@@ -10,6 +10,7 @@ idf_component_register(
         "rest_api_config.c"
         "rest_api_network.c"
         "rest_api_offline.c"
+        "rest_api_talk.c"
         "web_portal.c"
     INCLUDE_DIRS
         "include"
@@ -20,10 +21,16 @@ idf_component_register(
         common
         freertos
         services_config
+        services_audio
+        services_led
+        services_mic
         services_network
         esp_http_server
+        esp_https_server
         esp_timer
     EMBED_TXTFILES
+        "certs/servercert.pem"
+        "certs/prvtkey.pem"
         "portal/pages/offline.html"
         "portal/pages/hybrid.html"
         "portal/pages/installation.html"

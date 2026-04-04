@@ -268,6 +268,60 @@ static void stop_all_playback(void)
     audio_worker_audio_level_reset(true);
 }
 
+static void flush_pcm_tail_silence(void)
+{
+    if (!s_output_started || s_output_paused) {
+        return;
+    }
+    if (s_bg.active || s_playback_state != AUDIO_PLAYBACK_IDLE) {
+        return;
+    }
+    static const int16_t kSilence[256] = { 0 };
+
+    uint32_t dma_desc = (uint32_t)CONFIG_ORB_AUDIO_I2S_DMA_DESC_NUM;
+    uint32_t dma_frame = (uint32_t)CONFIG_ORB_AUDIO_I2S_DMA_FRAME_NUM;
+#if CONFIG_ORB_AUDIO_REAL_MP3_ENABLE
+    if (dma_desc < 16U) {
+        dma_desc = 16U;
+    }
+    if (dma_frame < 512U) {
+        dma_frame = 512U;
+    }
+#endif
+    uint32_t samples_to_flush = dma_desc * dma_frame;
+    if (samples_to_flush < 1024U) {
+        samples_to_flush = 1024U;
+    }
+    samples_to_flush += dma_frame; /* one extra frame as guard */
+
+    uint32_t sent = 0U;
+    while (sent < samples_to_flush) {
+        uint16_t chunk = 256U;
+        uint32_t left = samples_to_flush - sent;
+        if (left < (uint32_t)chunk) {
+            chunk = (uint16_t)left;
+        }
+        esp_err_t err = audio_output_i2s_write_mono_pcm16(kSilence, chunk, 20U);
+        if (err != ESP_OK) {
+            ESP_LOGD(TAG, "pcm tail flush interrupted at %lu/%lu samples: %s",
+                     (unsigned long)sent,
+                     (unsigned long)samples_to_flush,
+                     esp_err_to_name(err));
+            break;
+        }
+        sent += chunk;
+    }
+
+    uint32_t drain_ms = (uint32_t)(((uint64_t)sent * 1000ULL) / (uint64_t)CONFIG_ORB_AUDIO_I2S_SAMPLE_RATE_HZ);
+    if (drain_ms < 8U) {
+        drain_ms = 8U;
+    }
+    if (drain_ms > 260U) {
+        drain_ms = 260U;
+    }
+    vTaskDelay(audio_worker_ms_to_ticks_min1(drain_ms));
+}
+
 static void finalize_with_done(void)
 {
     assert_owner_task();
@@ -500,6 +554,7 @@ void audio_worker_handle_command(const audio_command_t *cmd)
         s_pcm_stream_active = false;
         s_pcm_stream_chunk_written_since_poll = false;
         if (!s_bg.active && s_playback_state == AUDIO_PLAYBACK_IDLE && s_output_started && !s_output_paused) {
+            flush_pcm_tail_silence();
             (void)audio_output_i2s_pause_stream();
             s_output_paused = true;
         }

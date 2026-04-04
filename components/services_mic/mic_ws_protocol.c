@@ -132,12 +132,20 @@ static size_t json_escape_copy(const char *src, char *dst, size_t dst_len)
     }
 
     size_t j = 0U;
-    for (size_t i = 0U; src[i] != '\0' && j + 2U < dst_len; ++i) {
+    for (size_t i = 0U; src[i] != '\0'; ++i) {
         char c = src[i];
         if (c == '\\' || c == '"') {
+            if (j + 2U >= dst_len) {
+                dst[0] = '\0';
+                return SIZE_MAX;
+            }
             dst[j++] = '\\';
             dst[j++] = c;
         } else if ((unsigned char)c >= 0x20U) {
+            if (j + 1U >= dst_len) {
+                dst[0] = '\0';
+                return SIZE_MAX;
+            }
             dst[j++] = c;
         }
     }
@@ -254,8 +262,11 @@ esp_err_t mic_ws_protocol_build_tts_request(const char *text,
         return ESP_ERR_INVALID_ARG;
     }
 
-    char escaped[256];
-    (void)json_escape_copy(text, escaped, sizeof(escaped));
+    char escaped[1024];
+    size_t escaped_len = json_escape_copy(text, escaped, sizeof(escaped));
+    if (escaped_len == SIZE_MAX || escaped_len == 0U) {
+        return ESP_ERR_INVALID_SIZE;
+    }
 
     int n = snprintf(out,
                      out_size,

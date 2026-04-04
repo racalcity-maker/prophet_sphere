@@ -2,15 +2,20 @@
 
 #include <stdio.h>
 #include "config_manager.h"
-#include "control_dispatch.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "led_service.h"
 #include "log_tags.h"
 #include "rest_api_common.h"
 #include "sdkconfig.h"
 
 static const char *TAG = LOG_TAG_REST;
+
+static uint32_t request_timeout_ms(void)
+{
+    return (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
+}
 
 static esp_err_t led_scene_handler(httpd_req_t *req)
 {
@@ -33,7 +38,7 @@ static esp_err_t led_scene_handler(httpd_req_t *req)
         }
     }
 
-    esp_err_t err = control_dispatch_queue_led_scene(scene_id, duration_ms);
+    esp_err_t err = led_service_play_scene((led_scene_id_t)scene_id, duration_ms, request_timeout_ms());
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "led scene failed: %s", esp_err_to_name(err));
         return rest_api_send_error_json(req, "500 Internal Server Error", "led_scene_failed");
@@ -60,7 +65,7 @@ static esp_err_t led_brightness_handler(httpd_req_t *req)
         return rest_api_send_error_json(req, "400 Bad Request", "invalid_value");
     }
 
-    esp_err_t err = control_dispatch_queue_led_brightness((uint8_t)value);
+    esp_err_t err = led_service_set_brightness((led_brightness_t)value, request_timeout_ms());
     if (err != ESP_OK) {
         return rest_api_send_error_json(req, "500 Internal Server Error", "led_brightness_failed");
     }

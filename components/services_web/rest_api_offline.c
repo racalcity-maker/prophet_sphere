@@ -3,8 +3,8 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include "audio_service.h"
 #include "config_manager.h"
-#include "control_dispatch.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "log_tags.h"
@@ -14,6 +14,11 @@
 #include "session_controller.h"
 
 static const char *TAG = LOG_TAG_REST;
+
+static uint32_t request_timeout_ms(void)
+{
+    return (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
+}
 
 #ifndef CONFIG_ORB_AUDIO_PROPHECY_BG_WAV_PATH
 #define CONFIG_ORB_AUDIO_PROPHECY_BG_WAV_PATH "/sdcard/audio/backgrounds/oracle.wav"
@@ -124,7 +129,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_fg_volume");
         }
         (void)config_manager_set_audio_volume((uint8_t)volume);
-        (void)control_dispatch_queue_audio_set_volume((uint8_t)volume);
+        (void)audio_service_set_volume((uint8_t)volume, request_timeout_ms());
         has_any = true;
     }
 
@@ -282,7 +287,7 @@ static esp_err_t offline_action_handler(httpd_req_t *req)
     }
 
     if (strcmp(value, "audio_stop") == 0) {
-        if (control_dispatch_queue_audio_stop() != ESP_OK) {
+        if (audio_service_stop(request_timeout_ms()) != ESP_OK) {
             return rest_api_send_error_json(req, "500 Internal Server Error", "audio_stop_failed");
         }
         return rest_api_send_json(req, "200 OK", "{\"ok\":true,\"action\":\"audio_stop\"}");

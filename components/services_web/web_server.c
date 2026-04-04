@@ -2,7 +2,7 @@
 
 #include <stdbool.h>
 #include "esp_check.h"
-#include "esp_http_server.h"
+#include "esp_https_server.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -13,15 +13,27 @@
 
 static const char *TAG = LOG_TAG_WEB;
 
+extern const unsigned char _binary_servercert_pem_start[] asm("_binary_servercert_pem_start");
+extern const unsigned char _binary_servercert_pem_end[] asm("_binary_servercert_pem_end");
+extern const unsigned char _binary_prvtkey_pem_start[] asm("_binary_prvtkey_pem_start");
+extern const unsigned char _binary_prvtkey_pem_end[] asm("_binary_prvtkey_pem_end");
+
 #ifndef CONFIG_ORB_WEB_MAX_URI_HANDLERS
 #define CONFIG_ORB_WEB_MAX_URI_HANDLERS 40
 #endif
 #ifndef CONFIG_ORB_WEB_SERVER_STACK_SIZE
 #define CONFIG_ORB_WEB_SERVER_STACK_SIZE 8192
 #endif
+#ifndef CONFIG_ORB_WEB_QUIET_TLS_HANDSHAKE_LOGS
+#define CONFIG_ORB_WEB_QUIET_TLS_HANDSHAKE_LOGS 1
+#endif
 
 #define ORB_WEB_PORTAL_URI_COUNT 7U
-#define ORB_WEB_REST_URI_COUNT 15U
+#if CONFIG_HTTPD_WS_SUPPORT
+#define ORB_WEB_REST_URI_COUNT 18U
+#else
+#define ORB_WEB_REST_URI_COUNT 17U
+#endif
 #define ORB_WEB_URI_REQUIRED (ORB_WEB_PORTAL_URI_COUNT + ORB_WEB_REST_URI_COUNT)
 
 typedef struct {
@@ -32,6 +44,9 @@ typedef struct {
 } web_server_ctx_t;
 
 static web_server_ctx_t s_web;
+#if CONFIG_ORB_WEB_QUIET_TLS_HANDSHAKE_LOGS
+static bool s_tls_log_levels_tuned;
+#endif
 
 static TickType_t lock_timeout_ticks(void)
 {
@@ -80,6 +95,16 @@ esp_err_t web_server_init(void)
         s_web.started = false;
         s_web.server = NULL;
     }
+#if CONFIG_ORB_WEB_QUIET_TLS_HANDSHAKE_LOGS
+    if (!s_tls_log_levels_tuned) {
+        /* Self-signed HTTPS on LAN can produce frequent client-side abort noise.
+         * Keep app logs readable by suppressing low-level TLS spam tags. */
+        esp_log_level_set("esp-tls-mbedtls", ESP_LOG_NONE);
+        esp_log_level_set("esp_https_server", ESP_LOG_WARN);
+        esp_log_level_set("httpd", ESP_LOG_WARN);
+        s_tls_log_levels_tuned = true;
+    }
+#endif
     unlock_state();
 
     ESP_LOGI(TAG, "web init port=%d", CONFIG_ORB_WEB_PORT);
@@ -103,17 +128,25 @@ esp_err_t web_server_start(void)
         return ESP_OK;
     }
 
-    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.server_port = (uint16_t)CONFIG_ORB_WEB_PORT;
-    cfg.max_uri_handlers = (uint16_t)CONFIG_ORB_WEB_MAX_URI_HANDLERS;
-    cfg.stack_size = (uint16_t)CONFIG_ORB_WEB_SERVER_STACK_SIZE;
-    cfg.lru_purge_enable = true;
+    httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
+    cfg.httpd.server_port = (uint16_t)CONFIG_ORB_WEB_PORT;
+    cfg.port_secure = (uint16_t)CONFIG_ORB_WEB_PORT;
+    cfg.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;
+    cfg.httpd.max_open_sockets = 3;
+    cfg.httpd.backlog_conn = 2;
+    cfg.httpd.max_uri_handlers = (uint16_t)CONFIG_ORB_WEB_MAX_URI_HANDLERS;
+    cfg.httpd.stack_size = (uint16_t)CONFIG_ORB_WEB_SERVER_STACK_SIZE;
+    cfg.httpd.lru_purge_enable = true;
+    cfg.servercert = _binary_servercert_pem_start;
+    cfg.servercert_len = (size_t)(_binary_servercert_pem_end - _binary_servercert_pem_start);
+    cfg.prvtkey_pem = _binary_prvtkey_pem_start;
+    cfg.prvtkey_len = (size_t)(_binary_prvtkey_pem_end - _binary_prvtkey_pem_start);
 
-    if ((unsigned)cfg.max_uri_handlers < ORB_WEB_URI_REQUIRED) {
+    if ((unsigned)cfg.httpd.max_uri_handlers < ORB_WEB_URI_REQUIRED) {
         unlock_state();
         ESP_LOGE(TAG,
                  "max_uri_handlers=%u is too small, required>=%u (portal=%u rest=%u)",
-                 (unsigned)cfg.max_uri_handlers,
+                 (unsigned)cfg.httpd.max_uri_handlers,
                  (unsigned)ORB_WEB_URI_REQUIRED,
                  (unsigned)ORB_WEB_PORTAL_URI_COUNT,
                  (unsigned)ORB_WEB_REST_URI_COUNT);
@@ -122,22 +155,22 @@ esp_err_t web_server_start(void)
 
     ESP_LOGI(TAG,
              "starting web server: port=%u max_uri_handlers=%u stack=%u required=%u",
-             (unsigned)cfg.server_port,
-             (unsigned)cfg.max_uri_handlers,
-             (unsigned)cfg.stack_size,
+             (unsigned)cfg.httpd.server_port,
+             (unsigned)cfg.httpd.max_uri_handlers,
+             (unsigned)cfg.httpd.stack_size,
              (unsigned)ORB_WEB_URI_REQUIRED);
 
     httpd_handle_t server = NULL;
-    esp_err_t err = httpd_start(&server, &cfg);
+    esp_err_t err = httpd_ssl_start(&server, &cfg);
     if (err != ESP_OK) {
         unlock_state();
-        ESP_LOGW(TAG, "httpd_start failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "httpd_ssl_start failed: %s", esp_err_to_name(err));
         return err;
     }
 
     err = rest_api_register_http_handlers(server);
     if (err != ESP_OK) {
-        (void)httpd_stop(server);
+        (void)httpd_ssl_stop(server);
         unlock_state();
         ESP_LOGW(TAG, "register rest handlers failed: %s", esp_err_to_name(err));
         return err;
@@ -150,8 +183,8 @@ esp_err_t web_server_start(void)
     ESP_LOGI(TAG,
              "web started port=%d max_uri_handlers=%u stack=%u",
              CONFIG_ORB_WEB_PORT,
-             (unsigned)cfg.max_uri_handlers,
-             (unsigned)cfg.stack_size);
+             (unsigned)cfg.httpd.max_uri_handlers,
+             (unsigned)cfg.httpd.stack_size);
     return ESP_OK;
 }
 
@@ -177,9 +210,9 @@ esp_err_t web_server_stop(void)
     s_web.started = false;
     unlock_state();
 
-    esp_err_t err = httpd_stop(server);
+    esp_err_t err = httpd_ssl_stop(server);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "httpd_stop failed: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "httpd_ssl_stop failed: %s", esp_err_to_name(err));
         return err;
     }
 

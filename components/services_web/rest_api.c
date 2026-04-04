@@ -19,6 +19,7 @@ static esp_err_t register_handlers(httpd_handle_t server)
     ESP_RETURN_ON_ERROR(rest_api_register_config_handlers(server), TAG, "config handlers");
     ESP_RETURN_ON_ERROR(rest_api_register_network_handlers(server), TAG, "network handlers");
     ESP_RETURN_ON_ERROR(rest_api_register_offline_handlers(server), TAG, "offline handlers");
+    ESP_RETURN_ON_ERROR(rest_api_register_talk_handlers(server), TAG, "talk handlers");
     ESP_LOGI(TAG, "all REST handlers registered");
     return ESP_OK;
 }

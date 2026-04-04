@@ -17,6 +17,7 @@ esp_err_t rest_api_register_audio_handlers(httpd_handle_t server);
 esp_err_t rest_api_register_config_handlers(httpd_handle_t server);
 esp_err_t rest_api_register_network_handlers(httpd_handle_t server);
 esp_err_t rest_api_register_offline_handlers(httpd_handle_t server);
+esp_err_t rest_api_register_talk_handlers(httpd_handle_t server);
 
 #ifdef __cplusplus
 }

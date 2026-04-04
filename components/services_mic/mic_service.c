@@ -7,6 +7,7 @@
 #include "mic_task.h"
 #include "service_lifecycle_guard.h"
 #include <stdio.h>
+#include <string.h>
 
 static const char *TAG = LOG_TAG_MIC;
 
@@ -124,6 +125,14 @@ esp_err_t mic_service_play_tts_text(const char *text, uint32_t stream_timeout_ms
         return ESP_ERR_INVALID_ARG;
     }
 
+    size_t text_len = strlen(text);
+    if (text_len >= MIC_TTS_TEXT_MAX_LEN) {
+        ESP_LOGW(TAG,
+                 "tts text too long for mic command: len=%u max=%u",
+                 (unsigned)text_len,
+                 (unsigned)(MIC_TTS_TEXT_MAX_LEN - 1U));
+        return ESP_ERR_INVALID_SIZE;
+    }
     mic_command_t cmd = { 0 };
     cmd.id = MIC_CMD_TTS_PLAY_TEXT;
     (void)snprintf(cmd.payload.tts_play.text,

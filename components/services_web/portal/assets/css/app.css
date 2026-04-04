@@ -121,7 +121,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
     background: #111827;
     color: var(--text);
     border: 1px solid #475569;
@@ -131,7 +132,8 @@ select {
 }
 
 input,
-select {
+select,
+textarea {
     width: 100%;
 }
 

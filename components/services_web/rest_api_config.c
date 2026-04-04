@@ -2,16 +2,22 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include "audio_service.h"
 #include "config_manager.h"
-#include "control_dispatch.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "led_service.h"
 #include "log_tags.h"
 #include "rest_api_common.h"
 #include "sdkconfig.h"
 
 static const char *TAG = LOG_TAG_REST;
+
+static uint32_t request_timeout_ms(void)
+{
+    return (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
+}
 
 static esp_err_t send_config_snapshot(httpd_req_t *req)
 {
@@ -66,7 +72,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_brightness");
         }
         (void)config_manager_set_led_brightness((uint8_t)brightness);
-        (void)control_dispatch_queue_led_brightness((uint8_t)brightness);
+        (void)led_service_set_brightness((led_brightness_t)brightness, request_timeout_ms());
         cfg.led_brightness = (uint8_t)brightness;
         has_any = true;
     }
@@ -77,7 +83,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_volume");
         }
         (void)config_manager_set_audio_volume((uint8_t)volume);
-        (void)control_dispatch_queue_audio_set_volume((uint8_t)volume);
+        (void)audio_service_set_volume((uint8_t)volume, request_timeout_ms());
         cfg.audio_volume = (uint8_t)volume;
         has_any = true;
     }

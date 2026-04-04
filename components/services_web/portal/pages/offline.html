@@ -62,7 +62,25 @@
 
     <section class="card mode-panel" data-mode-panel="talk">
         <h3>Talk</h3>
-        <p class="muted">This tab is reserved and not used in offline mode.</p>
+        <p class="muted">Text-to-speech and live phone mic stream directly to Orb.</p>
+        <div class="row">
+            <button id="talk-live-start-btn" class="good">Start Live Mic</button>
+            <button id="talk-live-stop-btn" class="bad" disabled>Stop Live Mic</button>
+            <span id="talk-live-state" class="muted">Live: stopped</span>
+        </div>
+        <div class="row">
+            <label class="grow">Text
+                <textarea id="talk-text" rows="4" maxlength="320" placeholder="Type phrase for TTS..."></textarea>
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>Stream Timeout (ms)
+                <input id="talk-timeout-ms" type="number" min="1000" max="180000" value="90000">
+            </label>
+        </div>
+        <div class="row">
+            <button id="talk-say-btn" class="primary">Say</button>
+        </div>
     </section>
 
     <section class="card mode-panel" data-mode-panel="settings">

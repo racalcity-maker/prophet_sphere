@@ -34,8 +34,12 @@ static TickType_t i2s_write_timeout_ticks(uint32_t timeout_ms)
 static esp_err_t create_tx_channel(void)
 {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    uint32_t dma_desc_num = (uint32_t)CONFIG_ORB_AUDIO_I2S_DMA_DESC_NUM;
-    uint32_t dma_frame_num = (uint32_t)CONFIG_ORB_AUDIO_I2S_DMA_FRAME_NUM;
+    const uint32_t base_desc_num = (uint32_t)CONFIG_ORB_AUDIO_I2S_DMA_DESC_NUM;
+    const uint32_t base_frame_num = (uint32_t)CONFIG_ORB_AUDIO_I2S_DMA_FRAME_NUM;
+    uint32_t dma_desc_num = base_desc_num;
+    uint32_t dma_frame_num = base_frame_num;
+    bool boosted_try = false;
+    bool can_fallback_to_base = false;
 
 #if CONFIG_ORB_AUDIO_REAL_MP3_ENABLE
     /*
@@ -46,6 +50,8 @@ static esp_err_t create_tx_channel(void)
     const uint32_t min_desc_num = 16U;
     const uint32_t min_frame_num = 512U;
     if (dma_desc_num < min_desc_num || dma_frame_num < min_frame_num) {
+        can_fallback_to_base = true;
+        boosted_try = true;
         ESP_LOGW(TAG,
                  "raising I2S DMA depth for MP3+BG stability: desc %lu->%lu frame %lu->%lu",
                  (unsigned long)dma_desc_num,
@@ -61,33 +67,56 @@ static esp_err_t create_tx_channel(void)
     }
 #endif
 
-    chan_cfg.dma_desc_num = dma_desc_num;
-    chan_cfg.dma_frame_num = dma_frame_num;
-    esp_err_t err = i2s_new_channel(&chan_cfg, &s_tx_channel, NULL);
-    if (err != ESP_OK) {
-        return err;
-    }
+    for (;;) {
+        chan_cfg.dma_desc_num = dma_desc_num;
+        chan_cfg.dma_frame_num = dma_frame_num;
+        esp_err_t err = i2s_new_channel(&chan_cfg, &s_tx_channel, NULL);
+        if (err != ESP_OK) {
+            if (err == ESP_ERR_NO_MEM && boosted_try && can_fallback_to_base) {
+                ESP_LOGW(TAG,
+                         "I2S DMA boost allocation failed, fallback to base desc=%lu frame=%lu",
+                         (unsigned long)base_desc_num,
+                         (unsigned long)base_frame_num);
+                dma_desc_num = base_desc_num;
+                dma_frame_num = base_frame_num;
+                boosted_try = false;
+                continue;
+            }
+            return err;
+        }
 
-    i2s_slot_mode_t slot_mode = CONFIG_ORB_AUDIO_I2S_MONO ? I2S_SLOT_MODE_MONO : I2S_SLOT_MODE_STEREO;
-    i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(CONFIG_ORB_AUDIO_I2S_SAMPLE_RATE_HZ),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, slot_mode),
-        .gpio_cfg =
-            {
-                .mclk = I2S_GPIO_UNUSED,
-                .bclk = CONFIG_ORB_AUDIO_I2S_BCLK_GPIO,
-                .ws = CONFIG_ORB_AUDIO_I2S_WS_GPIO,
-                .dout = CONFIG_ORB_AUDIO_I2S_DOUT_GPIO,
-                .din = I2S_GPIO_UNUSED,
-            },
-    };
-    err = i2s_channel_init_std_mode(s_tx_channel, &std_cfg);
-    if (err != ESP_OK) {
+        i2s_slot_mode_t slot_mode = CONFIG_ORB_AUDIO_I2S_MONO ? I2S_SLOT_MODE_MONO : I2S_SLOT_MODE_STEREO;
+        i2s_std_config_t std_cfg = {
+            .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(CONFIG_ORB_AUDIO_I2S_SAMPLE_RATE_HZ),
+            .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, slot_mode),
+            .gpio_cfg =
+                {
+                    .mclk = I2S_GPIO_UNUSED,
+                    .bclk = CONFIG_ORB_AUDIO_I2S_BCLK_GPIO,
+                    .ws = CONFIG_ORB_AUDIO_I2S_WS_GPIO,
+                    .dout = CONFIG_ORB_AUDIO_I2S_DOUT_GPIO,
+                    .din = I2S_GPIO_UNUSED,
+                },
+        };
+        err = i2s_channel_init_std_mode(s_tx_channel, &std_cfg);
+        if (err == ESP_OK) {
+            return ESP_OK;
+        }
+
         (void)i2s_del_channel(s_tx_channel);
         s_tx_channel = NULL;
+        if (err == ESP_ERR_NO_MEM && boosted_try && can_fallback_to_base) {
+            ESP_LOGW(TAG,
+                     "I2S std init with boosted DMA failed, fallback to base desc=%lu frame=%lu",
+                     (unsigned long)base_desc_num,
+                     (unsigned long)base_frame_num);
+            dma_desc_num = base_desc_num;
+            dma_frame_num = base_frame_num;
+            boosted_try = false;
+            continue;
+        }
         return err;
     }
-    return ESP_OK;
 }
 
 static void i2s_prime_silence(size_t sample_count)
@@ -140,14 +169,11 @@ esp_err_t audio_i2s_hal_start(void)
     }
 
     /*
-     * Full TX channel recreate on stream start:
-     * guarantees DMA descriptor/state reset and removes stale tail playback
-     * from previous session starts.
+     * Recreate TX channel on each start.
+     * This force-resets I2S/DMA state and avoids stale transport state
+     * after previous stream sessions (live/ws/tts/bg combinations).
      */
     if (s_tx_channel != NULL) {
-        if (s_started) {
-            (void)i2s_channel_disable(s_tx_channel);
-        }
         (void)i2s_del_channel(s_tx_channel);
         s_tx_channel = NULL;
     }

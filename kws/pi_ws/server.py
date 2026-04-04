@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -492,6 +493,11 @@ async def handle_client(
                         f"intent={last_intent} form={last_question_form} polarity={last_prediction_polarity} "
                         f"chars={len(text)}"
                     )
+                    if text_source == "plain_text":
+                        preview = text.replace("\r", "\\r").replace("\n", "\\n")
+                        if len(preview) > 220:
+                            preview = preview[:220] + "..."
+                        print(f"[conn {conn_id}] [tts] plain_text preview='{preview}'")
                     t0 = now_ms()
                     req_t0 = time.perf_counter()
                     segments = split_tts_text(text, tts_segment_max_chars)
@@ -618,9 +624,11 @@ async def handle_client(
                         f"send_ms={dt} audio_ms={total_audio_ms} pacing={tts_pacing} rtf={rtf:.3f}"
                     )
                 except Exception as exc:
-                    err = str(exc).strip() or "tts_failed"
+                    err_text = str(exc).strip()
+                    err = err_text if err_text else exc.__class__.__name__
                     await send_tts_control(ws, ok=False, error=err[:120])
-                    print(f"[conn {conn_id}] [tts] error: {err}")
+                    print(f"[conn {conn_id}] [tts] error: {err} ({exc.__class__.__name__})")
+                    traceback.print_exc()
                 continue
 
             if msg_type == "start":

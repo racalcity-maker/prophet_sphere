@@ -8,6 +8,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "log_tags.h"
 #include "mic_task_events.h"
@@ -44,6 +45,7 @@ typedef struct {
     uint32_t dropped_samples;
     bool stop_requested;
     TaskHandle_t feeder_task;
+    bool feeder_stack_psram;
     portMUX_TYPE lock;
 } tts_pcm_ring_t;
 
@@ -86,6 +88,22 @@ static bool push_pcm_stream_chunk(const int16_t *samples, uint16_t sample_count,
     cmd.payload.pcm_stream_chunk.sample_count = sample_count;
     memcpy(cmd.payload.pcm_stream_chunk.samples, samples, (size_t)sample_count * sizeof(int16_t));
     return (app_tasking_send_audio_command(&cmd, timeout_ms) == ESP_OK);
+}
+
+static void stop_pcm_stream_best_effort(void)
+{
+    audio_command_t stop_cmd = { .id = AUDIO_CMD_PCM_STREAM_STOP };
+    const uint32_t timeout_ms = 20U;
+    const uint32_t retries = 3U;
+    for (uint32_t i = 0U; i <= retries; ++i) {
+        esp_err_t err = app_tasking_send_audio_command(&stop_cmd, timeout_ms);
+        if (err == ESP_OK) {
+            return;
+        }
+        if (i < retries) {
+            vTaskDelay(ms_to_ticks_min1(2U));
+        }
+    }
 }
 
 static bool tts_ring_init(tts_pcm_ring_t *ring, uint32_t sample_rate_hz)
@@ -213,8 +231,13 @@ static void tts_feeder_task(void *arg)
                                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (chunk == NULL) {
         stats->dropped_chunks++;
+        bool stack_psram = ring->feeder_stack_psram;
         ring->feeder_task = NULL;
-        vTaskDelete(NULL);
+        if (stack_psram) {
+            vTaskDeleteWithCaps(NULL);
+        } else {
+            vTaskDelete(NULL);
+        }
         return;
     }
     bool in_underflow = false;
@@ -247,8 +270,13 @@ static void tts_feeder_task(void *arg)
         vTaskDelay(ms_to_ticks_min1(1U));
     }
     heap_caps_free(chunk);
+    bool stack_psram = ring->feeder_stack_psram;
     ring->feeder_task = NULL;
-    vTaskDelete(NULL);
+    if (stack_psram) {
+        vTaskDeleteWithCaps(NULL);
+    } else {
+        vTaskDelete(NULL);
+    }
 }
 
 static void pcm_chunk_stats(const int16_t *samples,
@@ -365,6 +393,7 @@ static esp_err_t tts_stream_chunk_cb(const int16_t *samples, uint16_t sample_cou
 void mic_task_tts_pipeline_play(uint32_t capture_id, const char *text, uint32_t stream_timeout_ms)
 {
     if (text == NULL || text[0] == '\0') {
+        stop_pcm_stream_best_effort();
         return;
     }
 
@@ -372,6 +401,7 @@ void mic_task_tts_pipeline_play(uint32_t capture_id, const char *text, uint32_t 
     tts_pcm_ring_t ring = { 0 };
     if (!tts_ring_init(&ring, (uint32_t)CONFIG_ORB_AUDIO_I2S_SAMPLE_RATE_HZ)) {
         ESP_LOGW(TAG, "tts ring alloc failed");
+        stop_pcm_stream_best_effort();
         mic_task_events_post_tts_error(ESP_ERR_NO_MEM);
         return;
     }
@@ -391,26 +421,56 @@ void mic_task_tts_pipeline_play(uint32_t capture_id, const char *text, uint32_t 
         .capture_id = capture_id,
         .ring = &ring,
     };
-    BaseType_t feeder_ok;
+    BaseType_t feeder_ok = pdFAIL;
+    ring.feeder_stack_psram = false;
+#if CONFIG_SPIRAM_USE_MALLOC
 #if CONFIG_FREERTOS_UNICORE
-    feeder_ok = xTaskCreate(tts_feeder_task,
-                            "mic_tts_feed",
-                            MIC_TTS_FEEDER_STACK_SIZE,
-                            &stats,
-                            (MIC_TTS_FEEDER_PRIORITY > 0) ? MIC_TTS_FEEDER_PRIORITY : 1U,
-                            &ring.feeder_task);
+    feeder_ok = xTaskCreateWithCaps(tts_feeder_task,
+                                    "mic_tts_feed",
+                                    MIC_TTS_FEEDER_STACK_SIZE,
+                                    &stats,
+                                    (MIC_TTS_FEEDER_PRIORITY > 0) ? MIC_TTS_FEEDER_PRIORITY : 1U,
+                                    &ring.feeder_task,
+                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 #else
-    feeder_ok = xTaskCreatePinnedToCore(tts_feeder_task,
-                                        "mic_tts_feed",
-                                        MIC_TTS_FEEDER_STACK_SIZE,
-                                        &stats,
-                                        (MIC_TTS_FEEDER_PRIORITY > 0) ? MIC_TTS_FEEDER_PRIORITY : 1U,
-                                        &ring.feeder_task,
-                                        CONFIG_ORB_MIC_TASK_CORE);
+    feeder_ok = xTaskCreatePinnedToCoreWithCaps(tts_feeder_task,
+                                                "mic_tts_feed",
+                                                MIC_TTS_FEEDER_STACK_SIZE,
+                                                &stats,
+                                                (MIC_TTS_FEEDER_PRIORITY > 0) ? MIC_TTS_FEEDER_PRIORITY : 1U,
+                                                &ring.feeder_task,
+                                                CONFIG_ORB_MIC_TASK_CORE,
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 #endif
+    if (feeder_ok == pdPASS && ring.feeder_task != NULL) {
+        ring.feeder_stack_psram = true;
+    } else {
+        ESP_LOGW(TAG, "mic_tts_feed PSRAM stack alloc failed, fallback to internal stack");
+        ring.feeder_task = NULL;
+    }
+#endif
+    if (feeder_ok != pdPASS || ring.feeder_task == NULL) {
+#if CONFIG_FREERTOS_UNICORE
+        feeder_ok = xTaskCreate(tts_feeder_task,
+                                "mic_tts_feed",
+                                MIC_TTS_FEEDER_STACK_SIZE,
+                                &stats,
+                                (MIC_TTS_FEEDER_PRIORITY > 0) ? MIC_TTS_FEEDER_PRIORITY : 1U,
+                                &ring.feeder_task);
+#else
+        feeder_ok = xTaskCreatePinnedToCore(tts_feeder_task,
+                                            "mic_tts_feed",
+                                            MIC_TTS_FEEDER_STACK_SIZE,
+                                            &stats,
+                                            (MIC_TTS_FEEDER_PRIORITY > 0) ? MIC_TTS_FEEDER_PRIORITY : 1U,
+                                            &ring.feeder_task,
+                                            CONFIG_ORB_MIC_TASK_CORE);
+#endif
+    }
     if (feeder_ok != pdPASS || ring.feeder_task == NULL) {
         tts_ring_deinit(&ring);
         ESP_LOGW(TAG, "tts feeder task create failed");
+        stop_pcm_stream_best_effort();
         mic_task_events_post_tts_error(ESP_ERR_NO_MEM);
         return;
     }
@@ -438,8 +498,13 @@ void mic_task_tts_pipeline_play(uint32_t capture_id, const char *text, uint32_t 
     }
     if (ring.feeder_task != NULL) {
         TaskHandle_t handle = ring.feeder_task;
+        bool stack_psram = ring.feeder_stack_psram;
         ring.feeder_task = NULL;
-        vTaskDelete(handle);
+        if (stack_psram) {
+            vTaskDeleteWithCaps(handle);
+        } else {
+            vTaskDelete(handle);
+        }
         ESP_LOGW(TAG,
                  "tts feeder forced stop (pending=%" PRIu32 " samples, pending_ms=%" PRIu32
                  ", wait_ms=%" PRIu32 ")",
@@ -448,6 +513,7 @@ void mic_task_tts_pipeline_play(uint32_t capture_id, const char *text, uint32_t 
                  drain_wait_ms);
     }
     tts_ring_deinit(&ring);
+    stop_pcm_stream_best_effort();
 
     uint32_t total_ms = (uint32_t)((xTaskGetTickCount() - tts_start_tick) * portTICK_PERIOD_MS);
 

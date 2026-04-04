@@ -135,6 +135,8 @@ typedef enum {
     MIC_CMD_TTS_PLAY_TEXT,
 } mic_command_id_t;
 
+#define MIC_TTS_TEXT_MAX_LEN 384U
+
 typedef struct {
     mic_command_id_t id;
     union {
@@ -143,7 +145,7 @@ typedef struct {
             uint32_t max_capture_ms;
         } start_capture;
         struct {
-            char text[160];
+            char text[MIC_TTS_TEXT_MAX_LEN];
             uint32_t timeout_ms;
         } tts_play;
     } payload;

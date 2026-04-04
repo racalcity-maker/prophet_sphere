@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -68,6 +69,13 @@ class TtsResult:
 
 
 _SILERO_CACHE: Dict[Tuple[str, str, str, str], Any] = {}
+
+
+def _text_preview(text: str, limit: int = 180) -> str:
+    s = (text or "").replace("\r", "\\r").replace("\n", "\\n")
+    if len(s) <= limit:
+        return s
+    return s[:limit] + "..."
 
 
 def _clamp_gain(gain: float) -> float:
@@ -385,6 +393,121 @@ async def _synthesize_piper(text: str, target_rate: int, voice_hint: str, cfg: T
     )
 
 
+def _normalize_text_for_silero(text: str) -> str:
+    s = (text or "").strip()
+    if not s:
+        return ""
+
+    # Normalize punctuation variants and remove stress marker leftovers.
+    s = (
+        s.replace("…", ". ")
+        .replace("—", ", ")
+        .replace("–", ", ")
+        .replace("«", "\"")
+        .replace("»", "\"")
+        .replace("+", "")
+    )
+
+    # Keep characters Silero typically handles well.
+    s = re.sub(r"[^0-9A-Za-zА-Яа-яЁё.,!?;:()\"' \t\r\n-]", " ", s)
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\s*\n\s*", " ", s).strip()
+    s = re.sub(r"([.,!?;:])\1+", r"\1", s)
+    s = re.sub(r"\s+([.,!?;:])", r"\1", s)
+
+    if s and s[-1] not in ".!?":
+        s += "."
+    return s
+
+
+def _silero_text_diag(original_text: str, normalized_text: str) -> str:
+    orig = original_text or ""
+    norm = normalized_text or ""
+    replaced = []
+    allowed = re.compile(r"[0-9A-Za-zА-Яа-яЁё.,!?;:()\"' \t\r\n-]")
+    for ch in orig:
+        if not allowed.fullmatch(ch):
+            replaced.append(f"U+{ord(ch):04X}:{repr(ch)}")
+    if len(replaced) > 24:
+        replaced = replaced[:24] + ["..."]
+    return (
+        f"orig_len={len(orig)} norm_len={len(norm)} "
+        f"orig='{_text_preview(orig)}' norm='{_text_preview(norm)}' "
+        f"replaced=[{', '.join(replaced)}]"
+    )
+
+
+def _silero_apply_with_fallback(model: Any, kwargs: Dict[str, Any]) -> np.ndarray:
+    original_text = str(kwargs.get("text", "") or "").strip()
+    normalized_text = _normalize_text_for_silero(original_text)
+
+    candidate_texts = []
+    if original_text:
+        candidate_texts.append(original_text)
+    if normalized_text and normalized_text not in candidate_texts:
+        candidate_texts.append(normalized_text)
+
+    style_variants = [
+        (bool(kwargs.get("put_accent", True)), bool(kwargs.get("put_yo", True))),
+        (False, False),
+    ]
+
+    last_exc: Optional[Exception] = None
+    for txt in candidate_texts:
+        for put_accent, put_yo in style_variants:
+            call_kwargs = dict(kwargs)
+            call_kwargs["text"] = txt
+            call_kwargs["put_accent"] = put_accent
+            call_kwargs["put_yo"] = put_yo
+            try:
+                audio = model.apply_tts(**call_kwargs)
+                arr = np.asarray(audio, dtype=np.float32).reshape(-1)
+                if arr.size > 0:
+                    return arr
+            except ValueError as exc:
+                last_exc = exc
+                continue
+
+    # Final fallback: split into simple sentences and synthesize piecewise.
+    split_src = normalized_text or original_text
+    parts = [p.strip() for p in re.split(r"[.!?;:]+", split_src) if p.strip()]
+    if len(parts) > 1:
+        sr = int(max(8000, min(48000, int(kwargs.get("sample_rate", 44100)))))
+        pause = np.zeros((max(1, int(sr * 0.12)),), dtype=np.float32)
+        chunks: list[np.ndarray] = []
+        for i, part in enumerate(parts):
+            piece = part if part.endswith((".", "!", "?")) else (part + ".")
+            ok_piece = False
+            for put_accent, put_yo in style_variants:
+                call_kwargs = dict(kwargs)
+                call_kwargs["text"] = piece
+                call_kwargs["put_accent"] = put_accent
+                call_kwargs["put_yo"] = put_yo
+                try:
+                    audio = model.apply_tts(**call_kwargs)
+                    arr = np.asarray(audio, dtype=np.float32).reshape(-1)
+                    if arr.size > 0:
+                        chunks.append(arr)
+                        if i + 1 < len(parts):
+                            chunks.append(pause)
+                        ok_piece = True
+                        break
+                except ValueError as exc:
+                    last_exc = exc
+                    continue
+            if not ok_piece:
+                break
+        if chunks:
+            merged = np.concatenate(chunks)
+            if merged.size > 0:
+                return merged
+
+    raise RuntimeError(
+        "silero rejected text after normalization; "
+        + _silero_text_diag(original_text, normalized_text)
+    ) from last_exc
+
+
 def _load_silero_model(cfg: TtsConfig) -> Tuple[Any, str]:
     try:
         import torch  # type: ignore
@@ -428,18 +551,19 @@ def _silero_synthesize_sync(text: str, target_rate: int, cfg: TtsConfig) -> TtsR
     if not speaker:
         speaker = "xenia"
 
+    normalized = _normalize_text_for_silero(text)
+    if not normalized:
+        raise RuntimeError("silero empty text after normalization")
+
     kwargs: Dict[str, Any] = {
-        "text": text,
+        "text": normalized,
         "speaker": speaker,
         "sample_rate": int(max(8000, min(48000, cfg.silero_sample_rate))),
     }
     kwargs["put_accent"] = bool(cfg.silero_put_accent)
     kwargs["put_yo"] = bool(cfg.silero_put_yo)
 
-    audio = model.apply_tts(**kwargs)
-    if hasattr(audio, "detach"):
-        audio = audio.detach().cpu().numpy()
-    audio_np = np.asarray(audio, dtype=np.float32).reshape(-1)
+    audio_np = _silero_apply_with_fallback(model, kwargs)
     if audio_np.size == 0:
         raise RuntimeError("silero returned empty audio")
 

@@ -43,6 +43,9 @@
 #ifndef CONFIG_ORB_MIC_WS_TTS_TIMEOUT_MS
 #define CONFIG_ORB_MIC_WS_TTS_TIMEOUT_MS 15000
 #endif
+#ifndef CONFIG_ORB_MIC_WS_TTS_FIRST_CHUNK_TIMEOUT_MS
+#define CONFIG_ORB_MIC_WS_TTS_FIRST_CHUNK_TIMEOUT_MS 7000
+#endif
 #ifndef CONFIG_ORB_MIC_WS_TTS_VOICE
 #define CONFIG_ORB_MIC_WS_TTS_VOICE "ruslan"
 #endif
@@ -118,7 +121,7 @@ static esp_err_t ws_send_tts_request(esp_websocket_client_handle_t client, const
         return ESP_ERR_INVALID_ARG;
     }
 
-    char msg[384];
+    char msg[1200];
     ESP_RETURN_ON_ERROR(mic_ws_protocol_build_tts_request(text,
                                                           sample_rate_hz,
                                                           CONFIG_ORB_MIC_WS_TTS_VOICE,
@@ -151,7 +154,13 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
 
     if (event_id == WEBSOCKET_EVENT_DISCONNECTED) {
         mic_ws_tts_stream_flush_tail(&s_ws, &s_lock);
+        bool was_tts = false;
+        bool tts_active = false;
+        bool tts_done = false;
         portENTER_CRITICAL(&s_lock);
+        was_tts = (s_ws.mode == MIC_WS_MODE_TTS);
+        tts_active = s_ws.tts_active;
+        tts_done = s_ws.tts_done;
         s_ws.connected = false;
         s_ws.start_sent = false;
         s_ws.rx_len = 0U;
@@ -161,6 +170,9 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
             s_ws.tts_active = false;
         }
         portEXIT_CRITICAL(&s_lock);
+        if (was_tts && tts_active && !tts_done) {
+            ESP_LOGW(TAG, "mic ws tts disconnected before done");
+        }
         return;
     }
 
@@ -236,6 +248,12 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
                 s_ws.tts_active = false;
             }
             portEXIT_CRITICAL(&s_lock);
+            if (failed) {
+                ESP_LOGW(TAG, "mic ws tts control error: %s", msg);
+            }
+            if (done) {
+                ESP_LOGI(TAG, "mic ws tts control done");
+            }
         }
         return;
     }
@@ -642,28 +660,54 @@ esp_err_t mic_ws_client_tts_play(const char *text,
         return err;
     }
 
-    TickType_t deadline = xTaskGetTickCount() + ms_to_ticks_min1(timeout_ms);
+    TickType_t start_tick = xTaskGetTickCount();
+    TickType_t deadline = start_tick + ms_to_ticks_min1(timeout_ms);
+    TickType_t first_chunk_deadline = start_tick + ms_to_ticks_min1(CONFIG_ORB_MIC_WS_TTS_FIRST_CHUNK_TIMEOUT_MS);
     while (!time_reached(xTaskGetTickCount(), deadline)) {
         bool done = false;
         bool failed = false;
         bool connected = false;
         uint32_t sent = 0U;
         uint32_t dropped = 0U;
+        uint32_t bytes = 0U;
+        uint32_t frames = 0U;
+        TickType_t started_tick = 0;
         portENTER_CRITICAL(&s_lock);
         done = s_ws.tts_done;
         failed = s_ws.tts_failed;
         connected = s_ws.connected;
         sent = s_ws.tts_chunks_sent;
         dropped = s_ws.tts_chunks_dropped;
-        uint32_t bytes = s_ws.tts_bytes_rx;
-        uint32_t frames = s_ws.tts_frames_rx;
-        TickType_t started_tick = s_ws.tts_started_tick;
+        bytes = s_ws.tts_bytes_rx;
+        frames = s_ws.tts_frames_rx;
+        started_tick = s_ws.tts_started_tick;
         portEXIT_CRITICAL(&s_lock);
+
+        TickType_t now_tick = xTaskGetTickCount();
+        if (frames == 0U && !done && !failed && connected && time_reached(now_tick, first_chunk_deadline)) {
+            uint32_t wait_ms = (uint32_t)((now_tick - start_tick) * portTICK_PERIOD_MS);
+            ESP_LOGW(TAG,
+                     "mic ws tts no first audio chunk within %" PRIu32 "ms (waited=%" PRIu32 "ms), abort",
+                     (uint32_t)CONFIG_ORB_MIC_WS_TTS_FIRST_CHUNK_TIMEOUT_MS,
+                     wait_ms);
+            mic_ws_client_abort();
+            return ESP_ERR_TIMEOUT;
+        }
 
         if (done) {
             uint32_t wall_ms = (uint32_t)((xTaskGetTickCount() - started_tick) * portTICK_PERIOD_MS);
             uint32_t audio_ms =
                 (sample_rate_hz > 0U) ? (bytes * 1000U / (sample_rate_hz * (uint32_t)sizeof(int16_t))) : 0U;
+            if (frames == 0U || bytes == 0U) {
+                ESP_LOGW(TAG,
+                         "mic ws tts done without audio payload wall_ms=%" PRIu32
+                         " frames=%" PRIu32 " bytes=%" PRIu32,
+                         wall_ms,
+                         frames,
+                         bytes);
+                mic_ws_client_abort();
+                return ESP_ERR_INVALID_RESPONSE;
+            }
             ESP_LOGD(TAG,
                      "mic ws tts complete wall_ms=%" PRIu32 " audio_ms=%" PRIu32
                      " frames=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32,
@@ -676,6 +720,15 @@ esp_err_t mic_ws_client_tts_play(const char *text,
             return ESP_OK;
         }
         if (failed || !connected) {
+            ESP_LOGW(TAG,
+                     "mic ws tts failed state: failed=%d connected=%d frames=%" PRIu32
+                     " bytes=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32,
+                     failed ? 1 : 0,
+                     connected ? 1 : 0,
+                     frames,
+                     bytes,
+                     sent,
+                     dropped);
             mic_ws_client_abort();
             return ESP_FAIL;
         }
