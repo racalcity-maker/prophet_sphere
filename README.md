@@ -190,11 +190,12 @@ KWS model export command (run after retraining):
 `python kws/scripts/export_kws_word_to_mic_c.py --checkpoint kws/runs/kws_word_ru_v3/kws_best.pt --word-intent-map kws/manifests_word_v2/word_to_intent.json --out-header components/services_mic/include/mic_kws_word_model.h --min-conf-permille 540`
 
 Raspberry Pi WS mic bridge (optional):
-- Run server:
-  `python kws/scripts/pi_mic_ws_server.py --host 0.0.0.0 --port 8765 --vosk-model ~/orb_ws/models/vosk-model-small-ru-0.22 --tts-backend piper`
+- Run server (current Silero baseline):
+  `python kws/scripts/pi_mic_ws_server.py --host 0.0.0.0 --port 8765 --vosk-model ~/orb_ws/models/vosk-model-small-ru-0.22 --tts-backend silero --silero-language ru --silero-speaker-model v4_ru --silero-speaker xenia`
 - ESP WS URL should point to Pi:
   `ws://<pi_ip>:8765/mic`
 - Server handles Vosk intent inference and streams synthesized TTS back to ESP in real time.
+- Full launch presets and variants: `docs/server_run.md`
 
 Current web layer is mode-first and functional:
 - `GET /` -> redirect to current mode home (`/offline|/hybrid|/installation`)
