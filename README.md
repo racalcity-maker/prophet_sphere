@@ -176,7 +176,7 @@ Project now uses custom `partitions.csv` with:
 
 ## Current Scope
 Not in active firmware flow:
-- live stream decode pipeline (phone mic/websocket) and advanced audio controls (pause/seek)
+- advanced live-talk DSP controls (AGC/NS/ducking presets), pause/seek UX, and rich stream diagnostics UI
 - AI backend networking
 - full speech-to-text dialogue pipeline (cloud/local ASR + NLP routing)
 - OTA download/apply workflow
@@ -209,6 +209,8 @@ Current web layer is mode-first and functional:
 - `POST /api/audio/stop`
 - `POST /api/led/scene?scene=<id>&duration_ms=<ms>`
 - `POST /api/led/brightness?value=0..255`
+- `POST /api/talk/say` (form/query: `text`, optional `timeout_ms`)
+- `GET /ws/talk` (websocket live talk stream from phone mic)
 - `GET /api/offline/state`
 - `GET /api/offline/config`
 - `POST /api/offline/config?...` for runtime offline settings:
