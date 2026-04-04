@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import re
+import threading
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -76,6 +79,8 @@ _TTS_FX_PRESETS: Dict[str, Dict[str, float]] = {
         "reverb_damp": 0.26,
     },
 }
+
+_CONTROL_MAX_BODY_BYTES = 65536
 
 
 def _env_float(name: str, default: float) -> float:
@@ -355,6 +360,238 @@ class CaptureState:
         self.pcm.clear()
 
 
+@dataclass(frozen=True)
+class RuntimeTtsState:
+    tts_cfg: TtsConfig
+    tts_chunk_ms: int
+    tts_segment_max_chars: int
+    tts_phrase_pause_ms: int
+    tts_pacing: str
+    tts_pacing_lead_ms: int
+    tts_chunk_min_bytes: int
+    tts_fx_preset: str
+
+
+class RuntimeTtsStore:
+    def __init__(self, state: RuntimeTtsState, config_file: Path) -> None:
+        self._state = state
+        self._lock = threading.RLock()
+        self._config_file = config_file
+
+    def snapshot(self) -> RuntimeTtsState:
+        with self._lock:
+            return self._state
+
+    def _norm_pacing(self, value: Any) -> str:
+        pacing = str(value or "").strip().lower()
+        if pacing not in ("realtime", "adaptive", "none"):
+            raise ValueError("invalid tts_pacing")
+        return pacing
+
+    def _norm_backend(self, value: Any) -> str:
+        backend = str(value or "").strip().lower()
+        if backend not in ("none", "piper", "silero", "yandex", "tone"):
+            raise ValueError("invalid tts_backend")
+        return backend
+
+    def _norm_bool(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off"):
+            return False
+        raise ValueError("invalid boolean")
+
+    def _norm_int(self, value: Any, *, lo: int, hi: int, name: str) -> int:
+        try:
+            iv = int(value)
+        except Exception as exc:
+            raise ValueError(f"invalid {name}") from exc
+        if iv < lo or iv > hi:
+            raise ValueError(f"invalid {name}")
+        return iv
+
+    def _norm_float(self, value: Any, *, lo: float, hi: float, name: str) -> float:
+        try:
+            fv = float(value)
+        except Exception as exc:
+            raise ValueError(f"invalid {name}") from exc
+        if fv < lo or fv > hi:
+            raise ValueError(f"invalid {name}")
+        return fv
+
+    def _apply_preset(self, cfg: TtsConfig, preset: str) -> TtsConfig:
+        base = _TTS_FX_PRESETS.get(preset, _TTS_FX_PRESETS["off"])
+        return replace(
+            cfg,
+            tts_echo_mix=float(base["echo_mix"]),
+            tts_echo_delay_ms=int(base["echo_delay_ms"]),
+            tts_echo_feedback=float(base["echo_feedback"]),
+            tts_reverb_mix=float(base["reverb_mix"]),
+            tts_reverb_room_scale=float(base["reverb_room_scale"]),
+            tts_reverb_damp=float(base["reverb_damp"]),
+        )
+
+    def update_from_patch(self, patch: Dict[str, Any]) -> RuntimeTtsState:
+        if not isinstance(patch, dict):
+            raise ValueError("patch must be object")
+        with self._lock:
+            state = self._state
+            cfg = state.tts_cfg
+            preset = state.tts_fx_preset
+            chunk_ms = state.tts_chunk_ms
+            segment_max_chars = state.tts_segment_max_chars
+            phrase_pause_ms = state.tts_phrase_pause_ms
+            pacing = state.tts_pacing
+            pacing_lead_ms = state.tts_pacing_lead_ms
+            chunk_min_bytes = state.tts_chunk_min_bytes
+
+            if "tts_fx_preset" in patch:
+                candidate = str(patch["tts_fx_preset"]).strip().lower()
+                if candidate not in _TTS_FX_PRESETS:
+                    raise ValueError("invalid tts_fx_preset")
+                preset = candidate
+                cfg = self._apply_preset(cfg, preset)
+
+            if "tts_backend" in patch:
+                cfg = replace(cfg, backend=self._norm_backend(patch["tts_backend"]))
+            if "tts_pacing" in patch:
+                pacing = self._norm_pacing(patch["tts_pacing"])
+            if "tts_chunk_ms" in patch:
+                chunk_ms = self._norm_int(patch["tts_chunk_ms"], lo=5, hi=200, name="tts_chunk_ms")
+            if "tts_chunk_min_bytes" in patch:
+                chunk_min_bytes = self._norm_int(patch["tts_chunk_min_bytes"], lo=128, hi=65536, name="tts_chunk_min_bytes")
+            if "tts_segment_max_chars" in patch:
+                segment_max_chars = self._norm_int(patch["tts_segment_max_chars"], lo=32, hi=1200, name="tts_segment_max_chars")
+            if "tts_phrase_pause_ms" in patch:
+                phrase_pause_ms = self._norm_int(patch["tts_phrase_pause_ms"], lo=0, hi=10000, name="tts_phrase_pause_ms")
+            if "tts_pacing_lead_ms" in patch:
+                pacing_lead_ms = self._norm_int(patch["tts_pacing_lead_ms"], lo=0, hi=2000, name="tts_pacing_lead_ms")
+
+            # Piper / shared controls
+            if "piper_default_model" in patch:
+                cfg = replace(cfg, piper_default_model=str(patch["piper_default_model"]).strip())
+            if "piper_length_scale" in patch:
+                cfg = replace(cfg, piper_length_scale=self._norm_float(patch["piper_length_scale"], lo=0.5, hi=2.5, name="piper_length_scale"))
+            if "piper_noise_scale" in patch:
+                cfg = replace(cfg, piper_noise_scale=self._norm_float(patch["piper_noise_scale"], lo=0.0, hi=2.0, name="piper_noise_scale"))
+            if "piper_noise_w" in patch:
+                cfg = replace(cfg, piper_noise_w=self._norm_float(patch["piper_noise_w"], lo=0.0, hi=2.0, name="piper_noise_w"))
+            if "piper_sentence_silence_s" in patch:
+                cfg = replace(cfg, piper_sentence_silence_s=self._norm_float(patch["piper_sentence_silence_s"], lo=0.0, hi=2.0, name="piper_sentence_silence_s"))
+            if "piper_pitch_scale" in patch:
+                cfg = replace(cfg, piper_pitch_scale=self._norm_float(patch["piper_pitch_scale"], lo=0.7, hi=1.5, name="piper_pitch_scale"))
+            if "tts_tempo_scale" in patch:
+                cfg = replace(cfg, tts_tempo_scale=self._norm_float(patch["tts_tempo_scale"], lo=0.65, hi=1.4, name="tts_tempo_scale"))
+
+            # Silero controls
+            if "silero_language" in patch:
+                cfg = replace(cfg, silero_language=str(patch["silero_language"]).strip())
+            if "silero_speaker_model" in patch:
+                cfg = replace(cfg, silero_speaker_model=str(patch["silero_speaker_model"]).strip())
+            if "silero_speaker" in patch:
+                cfg = replace(cfg, silero_speaker=str(patch["silero_speaker"]).strip())
+            if "silero_sample_rate" in patch:
+                cfg = replace(cfg, silero_sample_rate=self._norm_int(patch["silero_sample_rate"], lo=8000, hi=48000, name="silero_sample_rate"))
+            if "silero_put_accent" in patch:
+                cfg = replace(cfg, silero_put_accent=self._norm_bool(patch["silero_put_accent"]))
+            if "silero_put_yo" in patch:
+                cfg = replace(cfg, silero_put_yo=self._norm_bool(patch["silero_put_yo"]))
+            if "silero_num_threads" in patch:
+                cfg = replace(cfg, silero_num_threads=self._norm_int(patch["silero_num_threads"], lo=1, hi=8, name="silero_num_threads"))
+
+            # FX controls
+            if "tts_echo_mix" in patch:
+                cfg = replace(cfg, tts_echo_mix=self._norm_float(patch["tts_echo_mix"], lo=0.0, hi=1.0, name="tts_echo_mix"))
+            if "tts_echo_delay_ms" in patch:
+                cfg = replace(cfg, tts_echo_delay_ms=self._norm_int(patch["tts_echo_delay_ms"], lo=20, hi=1000, name="tts_echo_delay_ms"))
+            if "tts_echo_feedback" in patch:
+                cfg = replace(cfg, tts_echo_feedback=self._norm_float(patch["tts_echo_feedback"], lo=0.0, hi=0.95, name="tts_echo_feedback"))
+            if "tts_reverb_mix" in patch:
+                cfg = replace(cfg, tts_reverb_mix=self._norm_float(patch["tts_reverb_mix"], lo=0.0, hi=1.0, name="tts_reverb_mix"))
+            if "tts_reverb_room_scale" in patch:
+                cfg = replace(cfg, tts_reverb_room_scale=self._norm_float(patch["tts_reverb_room_scale"], lo=0.2, hi=2.0, name="tts_reverb_room_scale"))
+            if "tts_reverb_damp" in patch:
+                cfg = replace(cfg, tts_reverb_damp=self._norm_float(patch["tts_reverb_damp"], lo=0.0, hi=1.0, name="tts_reverb_damp"))
+            if "tts_tail_fade_ms" in patch:
+                cfg = replace(cfg, tts_tail_fade_ms=self._norm_int(patch["tts_tail_fade_ms"], lo=0, hi=2000, name="tts_tail_fade_ms"))
+            if "tts_tail_silence_ms" in patch:
+                cfg = replace(cfg, tts_tail_silence_ms=self._norm_int(patch["tts_tail_silence_ms"], lo=0, hi=4000, name="tts_tail_silence_ms"))
+
+            new_state = RuntimeTtsState(
+                tts_cfg=cfg,
+                tts_chunk_ms=chunk_ms,
+                tts_segment_max_chars=segment_max_chars,
+                tts_phrase_pause_ms=phrase_pause_ms,
+                tts_pacing=pacing,
+                tts_pacing_lead_ms=pacing_lead_ms,
+                tts_chunk_min_bytes=chunk_min_bytes,
+                tts_fx_preset=preset,
+            )
+            self._state = new_state
+            return new_state
+
+    def to_public_dict(self) -> Dict[str, Any]:
+        state = self.snapshot()
+        cfg = state.tts_cfg
+        return {
+            "tts_backend": cfg.backend,
+            "tts_pacing": state.tts_pacing,
+            "tts_chunk_ms": state.tts_chunk_ms,
+            "tts_chunk_min_bytes": state.tts_chunk_min_bytes,
+            "tts_segment_max_chars": state.tts_segment_max_chars,
+            "tts_phrase_pause_ms": state.tts_phrase_pause_ms,
+            "tts_pacing_lead_ms": state.tts_pacing_lead_ms,
+            "tts_fx_preset": state.tts_fx_preset,
+            "piper_default_model": cfg.piper_default_model,
+            "piper_length_scale": cfg.piper_length_scale,
+            "piper_noise_scale": cfg.piper_noise_scale,
+            "piper_noise_w": cfg.piper_noise_w,
+            "piper_sentence_silence_s": cfg.piper_sentence_silence_s,
+            "piper_pitch_scale": cfg.piper_pitch_scale,
+            "tts_tempo_scale": cfg.tts_tempo_scale,
+            "silero_language": cfg.silero_language,
+            "silero_speaker_model": cfg.silero_speaker_model,
+            "silero_speaker": cfg.silero_speaker,
+            "silero_sample_rate": cfg.silero_sample_rate,
+            "silero_put_accent": cfg.silero_put_accent,
+            "silero_put_yo": cfg.silero_put_yo,
+            "silero_num_threads": cfg.silero_num_threads,
+            "tts_echo_mix": cfg.tts_echo_mix,
+            "tts_echo_delay_ms": cfg.tts_echo_delay_ms,
+            "tts_echo_feedback": cfg.tts_echo_feedback,
+            "tts_reverb_mix": cfg.tts_reverb_mix,
+            "tts_reverb_room_scale": cfg.tts_reverb_room_scale,
+            "tts_reverb_damp": cfg.tts_reverb_damp,
+            "tts_tail_fade_ms": cfg.tts_tail_fade_ms,
+            "tts_tail_silence_ms": cfg.tts_tail_silence_ms,
+            "config_file": str(self._config_file),
+        }
+
+    def save(self) -> None:
+        payload = self.to_public_dict()
+        payload["_schema"] = "orb_tts_runtime_v1"
+        payload["_saved_ms"] = now_ms()
+        self._config_file.parent.mkdir(parents=True, exist_ok=True)
+        self._config_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def load(self) -> RuntimeTtsState:
+        if not self._config_file.exists():
+            raise FileNotFoundError(str(self._config_file))
+        raw = json.loads(self._config_file.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("invalid config file")
+        patch = dict(raw)
+        patch.pop("_schema", None)
+        patch.pop("_saved_ms", None)
+        patch.pop("config_file", None)
+        return self.update_from_patch(patch)
+
+
 @dataclass
 class PendingCapture:
     capture_id: int
@@ -412,19 +649,239 @@ async def warmup_tts_runtime(
         print(f"[warmup] tts pass={idx + 1}/{total} backend={backend} sr={rate} elapsed_ms={dt}")
 
 
+def _build_runtime_tts_state(args: argparse.Namespace) -> RuntimeTtsState:
+    fx = _resolve_tts_fx(args)
+    tts_cfg = TtsConfig(
+        backend=str(args.tts_backend).strip().lower(),
+        piper_bin=str(args.piper_bin).strip(),
+        piper_model_dir=Path(args.piper_model_dir).expanduser(),
+        piper_default_model=str(args.piper_default_model).strip(),
+        piper_default_config=str(args.piper_default_config).strip(),
+        piper_espeak_data_dir=Path(args.piper_espeak_data_dir).expanduser(),
+        piper_length_scale=float(args.piper_length_scale),
+        piper_noise_scale=float(args.piper_noise_scale),
+        piper_noise_w=float(args.piper_noise_w),
+        piper_sentence_silence_s=float(args.piper_sentence_silence_s),
+        piper_pitch_scale=float(args.piper_pitch_scale),
+        tts_tempo_scale=float(args.tts_tempo_scale),
+        silero_repo_or_dir=str(args.silero_repo_or_dir).strip(),
+        silero_language=str(args.silero_language).strip(),
+        silero_speaker_model=str(args.silero_speaker_model).strip(),
+        silero_speaker=str(args.silero_speaker).strip(),
+        silero_sample_rate=int(args.silero_sample_rate),
+        silero_device=str(args.silero_device).strip(),
+        silero_put_accent=bool(args.silero_put_accent),
+        silero_put_yo=bool(args.silero_put_yo),
+        silero_num_threads=int(args.silero_num_threads),
+        yandex_endpoint=str(args.yandex_endpoint).strip(),
+        yandex_api_key=str(args.yandex_api_key).strip(),
+        yandex_iam_token=str(args.yandex_iam_token).strip(),
+        yandex_folder_id=str(args.yandex_folder_id).strip(),
+        yandex_lang=str(args.yandex_lang).strip(),
+        yandex_voice=str(args.yandex_voice).strip(),
+        yandex_speed=float(args.yandex_speed),
+        yandex_emotion=str(args.yandex_emotion).strip(),
+        yandex_timeout_s=float(args.yandex_timeout_s),
+        tts_echo_mix=float(fx["echo_mix"]),
+        tts_echo_delay_ms=int(fx["echo_delay_ms"]),
+        tts_echo_feedback=float(fx["echo_feedback"]),
+        tts_reverb_mix=float(fx["reverb_mix"]),
+        tts_reverb_room_scale=float(fx["reverb_room_scale"]),
+        tts_reverb_damp=float(fx["reverb_damp"]),
+        tts_tail_fade_ms=int(args.tts_tail_fade_ms),
+        tts_tail_silence_ms=int(args.tts_tail_silence_ms),
+        tone_hz=float(args.tts_tone_hz),
+        tone_ms=int(args.tts_tone_ms),
+        tone_gain=float(args.tts_tone_gain),
+    )
+    return RuntimeTtsState(
+        tts_cfg=tts_cfg,
+        tts_chunk_ms=int(args.tts_chunk_ms),
+        tts_segment_max_chars=int(args.tts_segment_max_chars),
+        tts_phrase_pause_ms=int(args.tts_phrase_pause_ms),
+        tts_pacing=str(args.tts_pacing).strip().lower(),
+        tts_pacing_lead_ms=int(args.tts_pacing_lead_ms),
+        tts_chunk_min_bytes=int(args.tts_chunk_min_bytes),
+        tts_fx_preset=str(fx["preset"]),
+    )
+
+
+def _bool_from_header_token(expected_token: str, provided: str) -> bool:
+    if not expected_token:
+        return True
+    return provided.strip() == expected_token
+
+
+def _http_json_response(
+    status: int,
+    payload: Dict[str, Any],
+    *,
+    allow_origin: str,
+    methods: str = "GET,POST,OPTIONS",
+) -> bytes:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    reason_map = {
+        200: "OK",
+        204: "No Content",
+        400: "Bad Request",
+        401: "Unauthorized",
+        404: "Not Found",
+        405: "Method Not Allowed",
+        500: "Internal Server Error",
+    }
+    reason = reason_map.get(status, "OK")
+    headers = [
+        f"HTTP/1.1 {status} {reason}\r\n",
+        "Content-Type: application/json; charset=utf-8\r\n",
+        f"Content-Length: {len(body)}\r\n",
+        "Connection: close\r\n",
+        f"Access-Control-Allow-Origin: {allow_origin}\r\n",
+        f"Access-Control-Allow-Methods: {methods}\r\n",
+        "Access-Control-Allow-Headers: Content-Type, X-Orb-Token\r\n",
+        "\r\n",
+    ]
+    return "".join(headers).encode("utf-8") + body
+
+
+async def start_tts_control_server(
+    *,
+    host: str,
+    port: int,
+    runtime_store: RuntimeTtsStore,
+    allow_origin: str,
+    auth_token: str,
+) -> asyncio.base_events.Server:
+    async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            head = await reader.readuntil(b"\r\n\r\n")
+        except Exception:
+            writer.close()
+            await writer.wait_closed()
+            return
+
+        try:
+            head_text = head.decode("utf-8", errors="replace")
+            lines = head_text.split("\r\n")
+            req_line = lines[0] if lines else ""
+            parts = req_line.split(" ")
+            if len(parts) < 2:
+                writer.write(_http_json_response(400, {"ok": False, "error": "bad_request"}, allow_origin=allow_origin))
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+                return
+            method = parts[0].upper().strip()
+            full_path = parts[1].strip()
+            path = urlparse(full_path).path
+
+            headers: Dict[str, str] = {}
+            for line in lines[1:]:
+                if not line or ":" not in line:
+                    continue
+                k, v = line.split(":", 1)
+                headers[k.strip().lower()] = v.strip()
+
+            if method == "OPTIONS":
+                writer.write(_http_json_response(204, {"ok": True}, allow_origin=allow_origin))
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+                return
+
+            if auth_token:
+                provided = headers.get("x-orb-token", "")
+                if not _bool_from_header_token(auth_token, provided):
+                    writer.write(_http_json_response(401, {"ok": False, "error": "unauthorized"}, allow_origin=allow_origin))
+                    await writer.drain()
+                    writer.close()
+                    await writer.wait_closed()
+                    return
+
+            content_length = int(headers.get("content-length", "0") or "0")
+            if content_length < 0 or content_length > _CONTROL_MAX_BODY_BYTES:
+                writer.write(_http_json_response(400, {"ok": False, "error": "request_too_large"}, allow_origin=allow_origin))
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+                return
+
+            body = b""
+            if content_length > 0:
+                body = await reader.readexactly(content_length)
+
+            if path == "/api/tts/config":
+                if method == "GET":
+                    payload = {"ok": True, "config": runtime_store.to_public_dict()}
+                    writer.write(_http_json_response(200, payload, allow_origin=allow_origin))
+                elif method == "POST":
+                    if not body:
+                        writer.write(_http_json_response(400, {"ok": False, "error": "missing_body"}, allow_origin=allow_origin))
+                    else:
+                        try:
+                            patch = json.loads(body.decode("utf-8"))
+                            if not isinstance(patch, dict):
+                                raise ValueError("patch must be object")
+                            runtime_store.update_from_patch(patch)
+                            payload = {"ok": True, "config": runtime_store.to_public_dict()}
+                            writer.write(_http_json_response(200, payload, allow_origin=allow_origin))
+                        except Exception as exc:
+                            writer.write(
+                                _http_json_response(
+                                    400,
+                                    {"ok": False, "error": "invalid_config_patch", "detail": str(exc)[:240]},
+                                    allow_origin=allow_origin,
+                                )
+                            )
+                else:
+                    writer.write(_http_json_response(405, {"ok": False, "error": "method_not_allowed"}, allow_origin=allow_origin))
+            elif path == "/api/tts/config/save":
+                if method != "POST":
+                    writer.write(_http_json_response(405, {"ok": False, "error": "method_not_allowed"}, allow_origin=allow_origin))
+                else:
+                    try:
+                        runtime_store.save()
+                        writer.write(_http_json_response(200, {"ok": True, "saved": True, "config": runtime_store.to_public_dict()}, allow_origin=allow_origin))
+                    except Exception as exc:
+                        writer.write(_http_json_response(500, {"ok": False, "error": "save_failed", "detail": str(exc)[:240]}, allow_origin=allow_origin))
+            elif path == "/api/tts/config/reload":
+                if method != "POST":
+                    writer.write(_http_json_response(405, {"ok": False, "error": "method_not_allowed"}, allow_origin=allow_origin))
+                else:
+                    try:
+                        runtime_store.load()
+                        writer.write(_http_json_response(200, {"ok": True, "reloaded": True, "config": runtime_store.to_public_dict()}, allow_origin=allow_origin))
+                    except FileNotFoundError:
+                        writer.write(_http_json_response(404, {"ok": False, "error": "config_file_not_found"}, allow_origin=allow_origin))
+                    except Exception as exc:
+                        writer.write(_http_json_response(400, {"ok": False, "error": "reload_failed", "detail": str(exc)[:240]}, allow_origin=allow_origin))
+            elif path == "/health":
+                writer.write(_http_json_response(200, {"ok": True, "service": "tts_control"}, allow_origin=allow_origin))
+            else:
+                writer.write(_http_json_response(404, {"ok": False, "error": "not_found"}, allow_origin=allow_origin))
+
+            await writer.drain()
+        except Exception as exc:
+            try:
+                writer.write(_http_json_response(500, {"ok": False, "error": "internal_error", "detail": str(exc)[:240]}, allow_origin=allow_origin))
+                await writer.drain()
+            except Exception:
+                pass
+        finally:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+    server = await asyncio.start_server(_handler, host=host, port=port)
+    return server
+
+
 async def handle_client(
     ws: Any,
     *,
     vosk_model: str,
     intent_keywords: Any,
     reasoner: Any,
-    tts_cfg: TtsConfig,
-    tts_chunk_ms: int,
-    tts_segment_max_chars: int,
-    tts_phrase_pause_ms: int,
-    tts_pacing: str,
-    tts_pacing_lead_ms: int,
-    tts_chunk_min_bytes: int,
+    runtime_tts_store: RuntimeTtsStore,
     oracle_bank: Optional[OracleTextBank],
     oracle_llm: Any,
     stress_overrides: Optional[StressOverrides],
@@ -486,6 +943,14 @@ async def handle_client(
                 req_rate = int(obj.get("sample_rate", 16000))
                 req_rate = max(8000, min(48000, req_rate))
                 voice = ""
+                runtime_tts = runtime_tts_store.snapshot()
+                tts_cfg = runtime_tts.tts_cfg
+                tts_chunk_ms = runtime_tts.tts_chunk_ms
+                tts_segment_max_chars = runtime_tts.tts_segment_max_chars
+                tts_phrase_pause_ms = runtime_tts.tts_phrase_pause_ms
+                tts_pacing = runtime_tts.tts_pacing
+                tts_pacing_lead_ms = runtime_tts.tts_pacing_lead_ms
+                tts_chunk_min_bytes = runtime_tts.tts_chunk_min_bytes
 
                 try:
                     print(
@@ -833,50 +1298,20 @@ async def handle_client(
 
 async def main_async(args: argparse.Namespace) -> None:
     vosk_model = str(Path(args.vosk_model).expanduser())
-    fx = _resolve_tts_fx(args)
-    tts_cfg = TtsConfig(
-        backend=str(args.tts_backend).strip().lower(),
-        piper_bin=str(args.piper_bin).strip(),
-        piper_model_dir=Path(args.piper_model_dir).expanduser(),
-        piper_default_model=str(args.piper_default_model).strip(),
-        piper_default_config=str(args.piper_default_config).strip(),
-        piper_espeak_data_dir=Path(args.piper_espeak_data_dir).expanduser(),
-        piper_length_scale=float(args.piper_length_scale),
-        piper_noise_scale=float(args.piper_noise_scale),
-        piper_noise_w=float(args.piper_noise_w),
-        piper_sentence_silence_s=float(args.piper_sentence_silence_s),
-        piper_pitch_scale=float(args.piper_pitch_scale),
-        tts_tempo_scale=float(args.tts_tempo_scale),
-        silero_repo_or_dir=str(args.silero_repo_or_dir).strip(),
-        silero_language=str(args.silero_language).strip(),
-        silero_speaker_model=str(args.silero_speaker_model).strip(),
-        silero_speaker=str(args.silero_speaker).strip(),
-        silero_sample_rate=int(args.silero_sample_rate),
-        silero_device=str(args.silero_device).strip(),
-        silero_put_accent=bool(args.silero_put_accent),
-        silero_put_yo=bool(args.silero_put_yo),
-        silero_num_threads=int(args.silero_num_threads),
-        yandex_endpoint=str(args.yandex_endpoint).strip(),
-        yandex_api_key=str(args.yandex_api_key).strip(),
-        yandex_iam_token=str(args.yandex_iam_token).strip(),
-        yandex_folder_id=str(args.yandex_folder_id).strip(),
-        yandex_lang=str(args.yandex_lang).strip(),
-        yandex_voice=str(args.yandex_voice).strip(),
-        yandex_speed=float(args.yandex_speed),
-        yandex_emotion=str(args.yandex_emotion).strip(),
-        yandex_timeout_s=float(args.yandex_timeout_s),
-        tts_echo_mix=float(fx["echo_mix"]),
-        tts_echo_delay_ms=int(fx["echo_delay_ms"]),
-        tts_echo_feedback=float(fx["echo_feedback"]),
-        tts_reverb_mix=float(fx["reverb_mix"]),
-        tts_reverb_room_scale=float(fx["reverb_room_scale"]),
-        tts_reverb_damp=float(fx["reverb_damp"]),
-        tts_tail_fade_ms=int(args.tts_tail_fade_ms),
-        tts_tail_silence_ms=int(args.tts_tail_silence_ms),
-        tone_hz=float(args.tts_tone_hz),
-        tone_ms=int(args.tts_tone_ms),
-        tone_gain=float(args.tts_tone_gain),
-    )
+    tts_runtime = _build_runtime_tts_state(args)
+    tts_config_file = Path(args.tts_config_file).expanduser().resolve()
+    runtime_tts_store = RuntimeTtsStore(tts_runtime, tts_config_file)
+    if bool(args.tts_config_autoload):
+        try:
+            runtime_tts_store.load()
+            print(f"tts runtime config loaded: {tts_config_file}")
+        except FileNotFoundError:
+            print(f"tts runtime config not found, using CLI defaults: {tts_config_file}")
+        except Exception as exc:
+            print(f"WARN failed to load tts runtime config {tts_config_file}: {exc}")
+
+    tts_snapshot = runtime_tts_store.snapshot()
+    tts_cfg = tts_snapshot.tts_cfg
     backend_probe = await validate_tts_backend(tts_cfg)
     if bool(args.tts_warmup):
         try:
@@ -953,8 +1388,6 @@ async def main_async(args: argparse.Namespace) -> None:
         )
     )
 
-    effective_tts_pacing = str(args.tts_pacing)
-
     async def _handler(ws: Any) -> None:
         path = getattr(ws, "path", "/mic")
         if path != "/mic":
@@ -966,27 +1399,37 @@ async def main_async(args: argparse.Namespace) -> None:
             vosk_model=vosk_model,
             intent_keywords=intent_keywords,
             reasoner=reasoner,
-            tts_cfg=tts_cfg,
-            tts_chunk_ms=args.tts_chunk_ms,
-            tts_segment_max_chars=args.tts_segment_max_chars,
-            tts_phrase_pause_ms=args.tts_phrase_pause_ms,
-            tts_pacing=effective_tts_pacing,
-            tts_pacing_lead_ms=args.tts_pacing_lead_ms,
-            tts_chunk_min_bytes=args.tts_chunk_min_bytes,
+            runtime_tts_store=runtime_tts_store,
             oracle_bank=oracle_bank,
             oracle_llm=oracle_llm,
             stress_overrides=stress_overrides,
         )
 
+    control_server = await start_tts_control_server(
+        host=str(args.control_host).strip(),
+        port=int(args.control_port),
+        runtime_store=runtime_tts_store,
+        allow_origin=str(args.control_allow_origin).strip() or "*",
+        auth_token=str(args.control_token).strip(),
+    )
+    print(
+        f"tts control API on http://{args.control_host}:{args.control_port} "
+        f"file={tts_config_file} autoload={'on' if args.tts_config_autoload else 'off'} "
+        f"token={'set' if str(args.control_token).strip() else 'off'}"
+    )
+
+    tts_snapshot = runtime_tts_store.snapshot()
+    tts_cfg = tts_snapshot.tts_cfg
+
     print(
         f"Starting mic WS server on {args.host}:{args.port} path=/mic "
         f"backend=vosk vosk_model={vosk_model} intent_map={intent_map_path} "
-        f"tts_backend={tts_cfg.backend} backend_probe={backend_probe} tts_chunk={args.tts_chunk_ms}ms "
-        f"tts_chunk_min_bytes={args.tts_chunk_min_bytes} "
-        f"tts_segment_max_chars={args.tts_segment_max_chars} "
-        f"tts_phrase_pause_ms={args.tts_phrase_pause_ms} "
-        f"tts_pacing_lead_ms={args.tts_pacing_lead_ms} "
-        f"tts_pacing={effective_tts_pacing} "
+        f"tts_backend={tts_cfg.backend} backend_probe={backend_probe} tts_chunk={tts_snapshot.tts_chunk_ms}ms "
+        f"tts_chunk_min_bytes={tts_snapshot.tts_chunk_min_bytes} "
+        f"tts_segment_max_chars={tts_snapshot.tts_segment_max_chars} "
+        f"tts_phrase_pause_ms={tts_snapshot.tts_phrase_pause_ms} "
+        f"tts_pacing_lead_ms={tts_snapshot.tts_pacing_lead_ms} "
+        f"tts_pacing={tts_snapshot.tts_pacing} "
         f"tts_warmup={'on' if args.tts_warmup else 'off'} "
         f"tts_warmup_passes={args.tts_warmup_passes} "
         f"tts_warmup_sr={args.tts_warmup_sample_rate} "
@@ -1000,20 +1443,24 @@ async def main_async(args: argparse.Namespace) -> None:
         f"reasoner={reasoner_probe} "
         f"oracle_llm={oracle_llm_probe} "
         f"piper[length={tts_cfg.piper_length_scale:.2f} pitch={tts_cfg.piper_pitch_scale:.2f} tempo={tts_cfg.tts_tempo_scale:.2f}] "
-        f"fx[preset={fx['preset']} echo_mix={tts_cfg.tts_echo_mix:.2f} echo_delay={tts_cfg.tts_echo_delay_ms} "
+        f"fx[preset={tts_snapshot.tts_fx_preset} echo_mix={tts_cfg.tts_echo_mix:.2f} echo_delay={tts_cfg.tts_echo_delay_ms} "
         f"echo_fb={tts_cfg.tts_echo_feedback:.2f} reverb_mix={tts_cfg.tts_reverb_mix:.2f} "
         f"reverb_room={tts_cfg.tts_reverb_room_scale:.2f} reverb_damp={tts_cfg.tts_reverb_damp:.2f}]"
     )
-    async with serve(
-        _handler,
-        args.host,
-        args.port,
-        max_size=None,
-        max_queue=32,
-        ping_interval=20,
-        ping_timeout=20,
-    ):
-        await asyncio.Future()
+    try:
+        async with serve(
+            _handler,
+            args.host,
+            args.port,
+            max_size=None,
+            max_queue=32,
+            ping_interval=20,
+            ping_timeout=20,
+        ):
+            await asyncio.Future()
+    finally:
+        control_server.close()
+        await control_server.wait_closed()
 
 
 def parse_args() -> argparse.Namespace:
@@ -1097,6 +1544,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tts-tone-hz", type=float, default=float(os.getenv("ORB_WS_TTS_TONE_HZ", "280.0")))
     p.add_argument("--tts-tone-ms", type=int, default=int(os.getenv("ORB_WS_TTS_TONE_MS", "1400")))
     p.add_argument("--tts-tone-gain", type=float, default=float(os.getenv("ORB_WS_TTS_TONE_GAIN", "0.35")))
+    p.add_argument("--control-host", default=os.getenv("ORB_WS_CONTROL_HOST", "0.0.0.0"))
+    p.add_argument("--control-port", type=int, default=int(os.getenv("ORB_WS_CONTROL_PORT", "8766")))
+    p.add_argument("--control-allow-origin", default=os.getenv("ORB_WS_CONTROL_ALLOW_ORIGIN", "*"))
+    p.add_argument("--control-token", default=os.getenv("ORB_WS_CONTROL_TOKEN", ""))
+    p.add_argument(
+        "--tts-config-file",
+        default=os.getenv("ORB_WS_TTS_CONFIG_FILE", str(Path("~/orb_ws/kws/pi_ws/tts_runtime_config.json").expanduser())),
+    )
+    p.add_argument("--tts-config-autoload", dest="tts_config_autoload", action="store_true", default=(os.getenv("ORB_WS_TTS_CONFIG_AUTOLOAD", "1") != "0"))
+    p.add_argument("--no-tts-config-autoload", dest="tts_config_autoload", action="store_false")
     return p.parse_args()
 
 

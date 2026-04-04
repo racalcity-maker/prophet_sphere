@@ -695,6 +695,20 @@ static void led_task_entry(void *arg)
              (unsigned)LED_MATRIX_W,
              (unsigned)LED_MATRIX_H,
              (unsigned)(1000U / CONFIG_ORB_LED_FRAME_INTERVAL_MS));
+    ESP_LOGI(TAG,
+             "led defaults brightness=%u limiter=%s cap=%umA channel=%umA idle=%umA",
+             (unsigned)s_runtime.brightness,
+#if CONFIG_ORB_LED_POWER_LIMIT_ENABLE
+             "on",
+             (unsigned)CONFIG_ORB_LED_MAX_CURRENT_MA,
+             (unsigned)CONFIG_ORB_LED_MAX_COLOR_CHANNEL_MA,
+             (unsigned)CONFIG_ORB_LED_IDLE_CURRENT_MA);
+#else
+             "off",
+             0U,
+             0U,
+             0U);
+#endif
 
     TickType_t last_wake = xTaskGetTickCount();
     TickType_t frame_period = frame_ticks();

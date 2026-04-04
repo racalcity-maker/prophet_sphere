@@ -63,6 +63,62 @@
         return data;
     }
 
+    function getServerTtsBaseUrl() {
+        const el = $("server-tts-url");
+        const raw = (el && el.value ? el.value : "").trim();
+        if (!raw) {
+            return "";
+        }
+        return raw.replace(/\/+$/, "");
+    }
+
+    function getServerTtsToken() {
+        const el = $("server-tts-token");
+        return (el && el.value ? el.value : "").trim();
+    }
+
+    function setServerTtsStatus(msg, isErr) {
+        const el = $("server-tts-status");
+        if (!el) {
+            return;
+        }
+        el.textContent = msg;
+        el.style.color = isErr ? "#fca5a5" : "#86efac";
+    }
+
+    async function serverTtsApi(path, method, body) {
+        const base = getServerTtsBaseUrl();
+        if (!base) {
+            throw new Error("missing_server_url");
+        }
+        const token = getServerTtsToken();
+        const headers = {};
+        if (token) {
+            headers["X-Orb-Token"] = token;
+        }
+        let payloadBody = undefined;
+        if (body !== undefined) {
+            headers["Content-Type"] = "application/json";
+            payloadBody = JSON.stringify(body);
+        }
+        const resp = await fetch(base + path, {
+            method: method || "GET",
+            headers: headers,
+            body: payloadBody
+        });
+        const text = await resp.text();
+        let data = {};
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch (e) {
+            data = { ok: false, error: "invalid_json", raw: text };
+        }
+        if (!resp.ok || data.ok === false) {
+            throw new Error(data.error || ("http_" + resp.status));
+        }
+        return data;
+    }
+
     function modeToPage(mode) {
         if (mode === "hybrid_ai") {
             return "hybrid";
@@ -222,7 +278,40 @@
         setText("inst-net-sta-ip", net.sta_ip || "-", "-");
         setText("inst-net-ap-ip", net.ap_ip || "-", "-");
         setText("inst-net-link", net.link_state || "-", "-");
+        setValue("mode-led-brightness-range", cfg.brightness, 160);
+        setValue("mode-led-brightness-value", cfg.brightness, 160);
+        setText("mode-led-brightness-current", cfg.brightness, "-");
+        setValue("mode-audio-volume-range", cfg.volume, 60);
+        setValue("mode-audio-volume-value", cfg.volume, 60);
+        setText("mode-audio-volume-current", cfg.volume, "-");
+        setValue("mode-hybrid-mic-capture-ms", cfg.hybrid_mic_capture_ms, 8000);
+        setValue("mode-hybrid-reject-threshold", cfg.hybrid_reject_threshold_permille, 380);
+        setText(
+            "mode-hybrid-params-current",
+            (cfg.hybrid_mic_capture_ms !== undefined && cfg.hybrid_reject_threshold_permille !== undefined)
+                ? (String(cfg.hybrid_mic_capture_ms) + " ms / " + String(cfg.hybrid_reject_threshold_permille))
+                : "-",
+            "-"
+        );
         return { status: status, network: net, config: cfg };
+    }
+
+    function fillServerTtsForm(cfg) {
+        if (!cfg) {
+            return;
+        }
+        setValue("server-tts-backend", cfg.tts_backend, "silero");
+        setValue("server-silero-speaker", cfg.silero_speaker, "xenia");
+        setValue("server-tts-tempo-scale", cfg.tts_tempo_scale, 0.85);
+        setValue("server-piper-pitch-scale", cfg.piper_pitch_scale, 1.0);
+        setValue("server-tts-phrase-pause-ms", cfg.tts_phrase_pause_ms, 1500);
+        setValue("server-tts-fx-preset", cfg.tts_fx_preset, "mystic");
+        setValue("server-tts-echo-mix", cfg.tts_echo_mix, 0.24);
+        setValue("server-tts-echo-delay-ms", cfg.tts_echo_delay_ms, 220);
+        setValue("server-tts-echo-feedback", cfg.tts_echo_feedback, 0.46);
+        setValue("server-tts-reverb-mix", cfg.tts_reverb_mix, 0.36);
+        setValue("server-tts-reverb-room-scale", cfg.tts_reverb_room_scale, 1.35);
+        setValue("server-tts-reverb-damp", cfg.tts_reverb_damp, 0.26);
     }
 
     function bindModeTabs() {
@@ -825,6 +914,207 @@
                     setStatus("STA credentials applied", false);
                 } catch (e) {
                     setStatus("Wi-Fi apply failed: " + e.message, true);
+                }
+            });
+        }
+
+        const ledRange = $("mode-led-brightness-range");
+        const ledValue = $("mode-led-brightness-value");
+        const ledApply = $("mode-led-brightness-apply-btn");
+        if (ledRange && ledValue) {
+            const syncRangeToValue = () => {
+                ledValue.value = ledRange.value;
+            };
+            const syncValueToRange = () => {
+                let v = Number(ledValue.value);
+                if (!Number.isFinite(v)) {
+                    v = 0;
+                }
+                if (v < 0) {
+                    v = 0;
+                } else if (v > 255) {
+                    v = 255;
+                }
+                ledValue.value = String(Math.round(v));
+                ledRange.value = ledValue.value;
+            };
+            ledRange.addEventListener("input", syncRangeToValue);
+            ledValue.addEventListener("input", syncValueToRange);
+        }
+        if (ledApply) {
+            ledApply.addEventListener("click", async () => {
+                const raw = (ledValue && ledValue.value !== "") ? ledValue.value : (ledRange ? ledRange.value : "0");
+                let brightness = Number(raw);
+                if (!Number.isFinite(brightness)) {
+                    setStatus("Brightness must be a number", true);
+                    return;
+                }
+                brightness = Math.round(brightness);
+                if (brightness < 0 || brightness > 255) {
+                    setStatus("Brightness must be in range 0..255", true);
+                    return;
+                }
+                try {
+                    await postQuery("/api/config", {
+                        brightness: brightness,
+                        save: "1",
+                    });
+                    await refreshNetworkSetupState(pageName);
+                    setStatus("Brightness updated", false);
+                } catch (e) {
+                    setStatus("Brightness update failed: " + e.message, true);
+                }
+            });
+        }
+
+        const volumeRange = $("mode-audio-volume-range");
+        const volumeValue = $("mode-audio-volume-value");
+        const volumeApply = $("mode-audio-volume-apply-btn");
+        if (volumeRange && volumeValue) {
+            const syncRangeToValue = () => {
+                volumeValue.value = volumeRange.value;
+            };
+            const syncValueToRange = () => {
+                let v = Number(volumeValue.value);
+                if (!Number.isFinite(v)) {
+                    v = 0;
+                }
+                if (v < 0) {
+                    v = 0;
+                } else if (v > 100) {
+                    v = 100;
+                }
+                volumeValue.value = String(Math.round(v));
+                volumeRange.value = volumeValue.value;
+            };
+            volumeRange.addEventListener("input", syncRangeToValue);
+            volumeValue.addEventListener("input", syncValueToRange);
+        }
+        if (volumeApply) {
+            volumeApply.addEventListener("click", async () => {
+                const raw = (volumeValue && volumeValue.value !== "") ? volumeValue.value : (volumeRange ? volumeRange.value : "0");
+                let volume = Number(raw);
+                if (!Number.isFinite(volume)) {
+                    setStatus("Volume must be a number", true);
+                    return;
+                }
+                volume = Math.round(volume);
+                if (volume < 0 || volume > 100) {
+                    setStatus("Volume must be in range 0..100", true);
+                    return;
+                }
+                try {
+                    await postQuery("/api/config", {
+                        volume: volume,
+                        save: "1",
+                    });
+                    await refreshNetworkSetupState(pageName);
+                    setStatus("Volume updated", false);
+                } catch (e) {
+                    setStatus("Volume update failed: " + e.message, true);
+                }
+            });
+        }
+
+        const hybridMicCapture = $("mode-hybrid-mic-capture-ms");
+        const hybridReject = $("mode-hybrid-reject-threshold");
+        const hybridParamsApply = $("mode-hybrid-params-apply-btn");
+        if (hybridParamsApply) {
+            hybridParamsApply.addEventListener("click", async () => {
+                let micCapture = Number(hybridMicCapture ? hybridMicCapture.value : "");
+                let rejectThreshold = Number(hybridReject ? hybridReject.value : "");
+                if (!Number.isFinite(micCapture) || !Number.isFinite(rejectThreshold)) {
+                    setStatus("Hybrid params must be numbers", true);
+                    return;
+                }
+                micCapture = Math.round(micCapture);
+                rejectThreshold = Math.round(rejectThreshold);
+                if (micCapture < 1000 || micCapture > 60000) {
+                    setStatus("Mic capture must be in range 1000..60000 ms", true);
+                    return;
+                }
+                if (rejectThreshold < 0 || rejectThreshold > 1000) {
+                    setStatus("Reject threshold must be in range 0..1000", true);
+                    return;
+                }
+                try {
+                    await postQuery("/api/config", {
+                        hybrid_mic_capture_ms: micCapture,
+                        hybrid_reject_threshold_permille: rejectThreshold,
+                        save: "1",
+                    });
+                    await refreshNetworkSetupState(pageName);
+                    setStatus("Hybrid params updated", false);
+                } catch (e) {
+                    setStatus("Hybrid params update failed: " + e.message, true);
+                }
+            });
+        }
+
+        const serverTtsLoadBtn = $("server-tts-load-btn");
+        const serverTtsApplyBtn = $("server-tts-apply-btn");
+        const serverTtsSaveBtn = $("server-tts-save-btn");
+
+        if (serverTtsLoadBtn) {
+            serverTtsLoadBtn.addEventListener("click", async () => {
+                try {
+                    const data = await serverTtsApi("/api/tts/config", "GET");
+                    fillServerTtsForm(data.config || {});
+                    setServerTtsStatus("Loaded", false);
+                    setStatus("Server TTS config loaded", false);
+                } catch (e) {
+                    setServerTtsStatus("Load failed", true);
+                    setStatus("Server TTS load failed: " + e.message, true);
+                }
+            });
+        }
+
+        if (serverTtsApplyBtn) {
+            serverTtsApplyBtn.addEventListener("click", async () => {
+                const num = (id, fallback) => {
+                    const el = $(id);
+                    const raw = el && el.value !== "" ? el.value : String(fallback);
+                    const v = Number(raw);
+                    if (!Number.isFinite(v)) {
+                        throw new Error("invalid_number_" + id);
+                    }
+                    return v;
+                };
+                try {
+                    const patch = {
+                        tts_backend: ($("server-tts-backend") && $("server-tts-backend").value) || "silero",
+                        silero_speaker: ($("server-silero-speaker") && $("server-silero-speaker").value || "").trim(),
+                        tts_tempo_scale: num("server-tts-tempo-scale", 0.85),
+                        piper_pitch_scale: num("server-piper-pitch-scale", 1.0),
+                        tts_phrase_pause_ms: Math.round(num("server-tts-phrase-pause-ms", 1500)),
+                        tts_fx_preset: ($("server-tts-fx-preset") && $("server-tts-fx-preset").value) || "mystic",
+                        tts_echo_mix: num("server-tts-echo-mix", 0.24),
+                        tts_echo_delay_ms: Math.round(num("server-tts-echo-delay-ms", 220)),
+                        tts_echo_feedback: num("server-tts-echo-feedback", 0.46),
+                        tts_reverb_mix: num("server-tts-reverb-mix", 0.36),
+                        tts_reverb_room_scale: num("server-tts-reverb-room-scale", 1.35),
+                        tts_reverb_damp: num("server-tts-reverb-damp", 0.26),
+                    };
+                    const data = await serverTtsApi("/api/tts/config", "POST", patch);
+                    fillServerTtsForm(data.config || {});
+                    setServerTtsStatus("Applied", false);
+                    setStatus("Server TTS config applied", false);
+                } catch (e) {
+                    setServerTtsStatus("Apply failed", true);
+                    setStatus("Server TTS apply failed: " + e.message, true);
+                }
+            });
+        }
+
+        if (serverTtsSaveBtn) {
+            serverTtsSaveBtn.addEventListener("click", async () => {
+                try {
+                    await serverTtsApi("/api/tts/config/save", "POST", {});
+                    setServerTtsStatus("Saved", false);
+                    setStatus("Server TTS config saved", false);
+                } catch (e) {
+                    setServerTtsStatus("Save failed", true);
+                    setStatus("Server TTS save failed: " + e.message, true);
                 }
             });
         }

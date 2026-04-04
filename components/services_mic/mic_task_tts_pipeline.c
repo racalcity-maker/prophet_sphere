@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "log_tags.h"
 #include "mic_task_events.h"
@@ -93,17 +94,29 @@ static bool push_pcm_stream_chunk(const int16_t *samples, uint16_t sample_count,
 static void stop_pcm_stream_best_effort(void)
 {
     audio_command_t stop_cmd = { .id = AUDIO_CMD_PCM_STREAM_STOP };
-    const uint32_t timeout_ms = 20U;
-    const uint32_t retries = 3U;
+    const uint32_t timeout_ms = (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
+    const TickType_t timeout_ticks = ms_to_ticks_min1(timeout_ms);
+    const uint32_t retries = 8U;
+    QueueHandle_t q = app_tasking_get_audio_cmd_queue();
+
     for (uint32_t i = 0U; i <= retries; ++i) {
-        esp_err_t err = app_tasking_send_audio_command(&stop_cmd, timeout_ms);
+        esp_err_t err = ESP_ERR_TIMEOUT;
+        if (q != NULL) {
+            BaseType_t ok = xQueueSendToFront(q, &stop_cmd, timeout_ticks);
+            if (ok == pdTRUE) {
+                err = ESP_OK;
+            }
+        } else {
+            err = app_tasking_send_audio_command(&stop_cmd, timeout_ms);
+        }
         if (err == ESP_OK) {
             return;
         }
         if (i < retries) {
-            vTaskDelay(ms_to_ticks_min1(2U));
+            vTaskDelay(ms_to_ticks_min1(4U));
         }
     }
+    ESP_LOGW(TAG, "failed to enqueue PCM stream stop after retries");
 }
 
 static bool tts_ring_init(tts_pcm_ring_t *ring, uint32_t sample_rate_hz)

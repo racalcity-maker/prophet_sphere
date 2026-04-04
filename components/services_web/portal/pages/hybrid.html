@@ -98,7 +98,119 @@
 
     <section class="card mode-panel" data-mode-panel="settings">
         <h3>Settings</h3>
-        <p class="muted">All active hybrid controls are on the Home tab.</p>
+        <p class="muted">Hybrid runtime settings.</p>
+        <div class="grid-two">
+            <label>LED Brightness (0..255)
+                <input id="mode-led-brightness-range" type="range" min="0" max="255" value="160">
+            </label>
+            <label>Brightness Value
+                <input id="mode-led-brightness-value" type="number" min="0" max="255" value="160">
+            </label>
+        </div>
+        <div class="row">
+            <button id="mode-led-brightness-apply-btn" class="primary">Apply Brightness</button>
+            <span class="muted">Current: <strong id="mode-led-brightness-current">-</strong></span>
+        </div>
+        <div class="grid-two">
+            <label>Audio Volume (0..100)
+                <input id="mode-audio-volume-range" type="range" min="0" max="100" value="60">
+            </label>
+            <label>Volume Value
+                <input id="mode-audio-volume-value" type="number" min="0" max="100" value="60">
+            </label>
+        </div>
+        <div class="row">
+            <button id="mode-audio-volume-apply-btn" class="primary">Apply Volume</button>
+            <span class="muted">Current: <strong id="mode-audio-volume-current">-</strong></span>
+        </div>
+        <div class="grid-two">
+            <label>Hybrid Mic Capture (ms)
+                <input id="mode-hybrid-mic-capture-ms" type="number" min="1000" max="60000" value="8000">
+            </label>
+            <label>Hybrid Reject Threshold (0..1000)
+                <input id="mode-hybrid-reject-threshold" type="number" min="0" max="1000" value="380">
+            </label>
+        </div>
+        <div class="row">
+            <button id="mode-hybrid-params-apply-btn" class="primary">Apply Hybrid Params</button>
+            <span class="muted">Mic/Reject current: <strong id="mode-hybrid-params-current">-</strong></span>
+        </div>
+
+        <hr>
+        <h4>Server Voice (Pi)</h4>
+        <div class="grid-two">
+            <label>Control URL
+                <input id="server-tts-url" type="text" value="http://127.0.0.1:8766" placeholder="http://pi_ip:8766">
+            </label>
+            <label>Control Token (optional)
+                <input id="server-tts-token" type="password" placeholder="X-Orb-Token">
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>TTS Backend
+                <select id="server-tts-backend">
+                    <option value="silero">silero</option>
+                    <option value="piper">piper</option>
+                    <option value="yandex">yandex</option>
+                    <option value="tone">tone</option>
+                    <option value="none">none</option>
+                </select>
+            </label>
+            <label>Silero Speaker
+                <input id="server-silero-speaker" type="text" value="xenia">
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>Tempo Scale
+                <input id="server-tts-tempo-scale" type="number" min="0.65" max="1.4" step="0.01" value="0.85">
+            </label>
+            <label>Pitch Scale
+                <input id="server-piper-pitch-scale" type="number" min="0.7" max="1.5" step="0.01" value="1.0">
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>Phrase Pause (ms)
+                <input id="server-tts-phrase-pause-ms" type="number" min="0" max="10000" value="1500">
+            </label>
+            <label>FX Preset
+                <select id="server-tts-fx-preset">
+                    <option value="off">off</option>
+                    <option value="soft">soft</option>
+                    <option value="mystic">mystic</option>
+                    <option value="deep">deep</option>
+                </select>
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>Echo Mix
+                <input id="server-tts-echo-mix" type="number" min="0" max="1" step="0.01" value="0.24">
+            </label>
+            <label>Echo Delay (ms)
+                <input id="server-tts-echo-delay-ms" type="number" min="20" max="1000" value="220">
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>Echo Feedback
+                <input id="server-tts-echo-feedback" type="number" min="0" max="0.95" step="0.01" value="0.46">
+            </label>
+            <label>Reverb Mix
+                <input id="server-tts-reverb-mix" type="number" min="0" max="1" step="0.01" value="0.36">
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>Reverb Room
+                <input id="server-tts-reverb-room-scale" type="number" min="0.2" max="2.0" step="0.01" value="1.35">
+            </label>
+            <label>Reverb Damp
+                <input id="server-tts-reverb-damp" type="number" min="0" max="1" step="0.01" value="0.26">
+            </label>
+        </div>
+        <div class="row">
+            <button id="server-tts-load-btn" class="primary">Load From Server</button>
+            <button id="server-tts-apply-btn" class="primary">Apply To Server</button>
+            <button id="server-tts-save-btn" class="good">Save On Server</button>
+            <span class="muted">Server status: <strong id="server-tts-status">-</strong></span>
+        </div>
     </section>
 </div>
 <script src="/assets/js/app.js"></script>
