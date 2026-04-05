@@ -209,7 +209,7 @@ Current web layer is mode-first and functional:
 - `POST /api/audio/stop`
 - `POST /api/led/scene?scene=<id>&duration_ms=<ms>`
 - `POST /api/led/brightness?value=0..255`
-- `POST /api/talk/say` (form/query: `text`, optional `timeout_ms`)
+- `POST /api/talk/say` (form/query: `text`, optional `timeout_ms`, optional `with_bg=0|1`)
 - `GET /ws/talk` (websocket live talk stream from phone mic)
 - `GET /api/offline/state`
 - `GET /api/offline/config`
@@ -221,6 +221,17 @@ Current web layer is mode-first and functional:
 - `POST /api/offline/submode?name=<aura|lottery|prophecy>`
 - `POST /api/offline/action?name=lottery_start|audio_stop`
 - `GET /api/config` and `POST /api/config?...` remain for broader system config.
+  Hybrid runtime fields exposed there:
+  `hybrid_mic_capture_ms`, `hybrid_reject_threshold_permille`,
+  `hybrid_unknown_retry_max (0..2)`, `prophecy_bg_fade_out_ms`.
+
+Hybrid page runtime controls:
+- Talk tab:
+  - `Play Background During Say` checkbox controls `with_bg` for `/api/talk/say`.
+  - When enabled, SAY follows normal conversation profile: background gain switch + fade-out after TTS.
+- Settings tab:
+  - `Hybrid Unknown Retries (0..2)` controls in-session retry loop for unknown/uncertain recognition.
+  - `Background Fade-Out (ms)` is a global fade-out speed for hybrid answer/retry and talk-say-with-bg flow.
 
 Web decomposition (current):
 - `web_server.c`: HTTP lifecycle only.
