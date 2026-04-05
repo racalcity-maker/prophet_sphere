@@ -21,6 +21,27 @@ static volatile bool s_stop_requested;
 #ifndef CONFIG_ORB_AUDIO_STOP_TIMEOUT_MS
 #define CONFIG_ORB_AUDIO_STOP_TIMEOUT_MS 300
 #endif
+#ifndef CONFIG_ORB_AUDIO_STOP_SEND_RETRY_COUNT
+#define CONFIG_ORB_AUDIO_STOP_SEND_RETRY_COUNT 8
+#endif
+#ifndef CONFIG_ORB_AUDIO_STOP_SEND_RETRY_DELAY_MS
+#define CONFIG_ORB_AUDIO_STOP_SEND_RETRY_DELAY_MS 10
+#endif
+#ifndef CONFIG_ORB_AUDIO_STOP_SEND_TIMEOUT_MS
+#define CONFIG_ORB_AUDIO_STOP_SEND_TIMEOUT_MS 10
+#endif
+
+static void audio_task_wake(void)
+{
+    TaskHandle_t handle = s_audio_task_handle;
+    if (handle != NULL) {
+#if defined(INCLUDE_xTaskAbortDelay) && (INCLUDE_xTaskAbortDelay == 1)
+        (void)xTaskAbortDelay(handle);
+#else
+        xTaskNotifyGive(handle);
+#endif
+    }
+}
 
 static void audio_task_entry(void *arg)
 {
@@ -110,10 +131,23 @@ esp_err_t audio_task_stop(void)
 
     /* Wake task promptly and ask worker to stop active playback. */
     QueueHandle_t queue = app_tasking_get_audio_cmd_queue();
+    bool stop_enqueued = false;
     if (queue != NULL) {
         audio_command_t stop_cmd = { .id = AUDIO_CMD_STOP };
-        (void)xQueueSend(queue, &stop_cmd, 0);
+        const TickType_t send_timeout_ticks = pdMS_TO_TICKS(CONFIG_ORB_AUDIO_STOP_SEND_TIMEOUT_MS);
+        for (uint32_t i = 0; i < (uint32_t)CONFIG_ORB_AUDIO_STOP_SEND_RETRY_COUNT; ++i) {
+            if (xQueueSend(queue, &stop_cmd, send_timeout_ticks) == pdTRUE) {
+                stop_enqueued = true;
+                break;
+            }
+            audio_task_wake();
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_ORB_AUDIO_STOP_SEND_RETRY_DELAY_MS));
+        }
     }
+    if (!stop_enqueued) {
+        ESP_LOGW(TAG, "audio_task stop command was not enqueued");
+    }
+    audio_task_wake();
 
     TickType_t wait_deadline = xTaskGetTickCount() + pdMS_TO_TICKS((uint32_t)CONFIG_ORB_AUDIO_STOP_TIMEOUT_MS + 200U);
     while (s_audio_task_running) {
@@ -121,6 +155,7 @@ esp_err_t audio_task_stop(void)
             ESP_LOGW(TAG, "audio_task stop timeout");
             return ESP_ERR_TIMEOUT;
         }
+        audio_task_wake();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 

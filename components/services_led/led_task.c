@@ -34,6 +34,15 @@ static uint32_t s_last_limit_log_ms;
 #ifndef CONFIG_ORB_LED_STOP_TIMEOUT_MS
 #define CONFIG_ORB_LED_STOP_TIMEOUT_MS 300
 #endif
+#ifndef CONFIG_ORB_LED_STOP_SEND_RETRY_COUNT
+#define CONFIG_ORB_LED_STOP_SEND_RETRY_COUNT 8
+#endif
+#ifndef CONFIG_ORB_LED_STOP_SEND_RETRY_DELAY_MS
+#define CONFIG_ORB_LED_STOP_SEND_RETRY_DELAY_MS 10
+#endif
+#ifndef CONFIG_ORB_LED_STOP_SEND_TIMEOUT_MS
+#define CONFIG_ORB_LED_STOP_SEND_TIMEOUT_MS 10
+#endif
 #ifndef CONFIG_ORB_LED_SCENE_CROSSFADE_MS
 #define CONFIG_ORB_LED_SCENE_CROSSFADE_MS 700
 #endif
@@ -87,6 +96,18 @@ static TickType_t frame_ticks(void)
 {
     TickType_t ticks = pdMS_TO_TICKS(CONFIG_ORB_LED_FRAME_INTERVAL_MS);
     return ticks > 0 ? ticks : 1;
+}
+
+static void led_task_wake(void)
+{
+    TaskHandle_t handle = s_led_task_handle;
+    if (handle != NULL) {
+#if defined(INCLUDE_xTaskAbortDelay) && (INCLUDE_xTaskAbortDelay == 1)
+        (void)xTaskAbortDelay(handle);
+#else
+        xTaskNotifyGive(handle);
+#endif
+    }
 }
 
 static led_scene_id_t startup_scene_id(void)
@@ -796,10 +817,23 @@ esp_err_t led_task_stop(void)
 
     s_stop_requested = true;
     QueueHandle_t queue = app_tasking_get_led_cmd_queue();
+    bool stop_enqueued = false;
     if (queue != NULL) {
         led_command_t cmd = { .id = LED_CMD_STOP };
-        (void)xQueueSend(queue, &cmd, 0);
+        const TickType_t send_timeout_ticks = pdMS_TO_TICKS(CONFIG_ORB_LED_STOP_SEND_TIMEOUT_MS);
+        for (uint32_t i = 0; i < (uint32_t)CONFIG_ORB_LED_STOP_SEND_RETRY_COUNT; ++i) {
+            if (xQueueSend(queue, &cmd, send_timeout_ticks) == pdTRUE) {
+                stop_enqueued = true;
+                break;
+            }
+            led_task_wake();
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_ORB_LED_STOP_SEND_RETRY_DELAY_MS));
+        }
     }
+    if (!stop_enqueued) {
+        ESP_LOGW(TAG, "led_task stop command was not enqueued");
+    }
+    led_task_wake();
 
     const TickType_t deadline =
         xTaskGetTickCount() + pdMS_TO_TICKS((uint32_t)CONFIG_ORB_LED_STOP_TIMEOUT_MS + 200U);
@@ -813,6 +847,7 @@ esp_err_t led_task_stop(void)
             (void)led_output_ws2812_clear(CONFIG_ORB_LED_TX_TIMEOUT_MS);
             return ESP_ERR_TIMEOUT;
         }
+        led_task_wake();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 

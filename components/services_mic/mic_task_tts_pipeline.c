@@ -28,7 +28,6 @@
 
 #define MIC_TTS_PCM_QUEUE_TIMEOUT_MS 20U
 #define MIC_TTS_PCM_QUEUE_RETRIES 4U
-#define MIC_TTS_STREAM_STARTED_MARKER UINT16_MAX
 #define MIC_TTS_RING_SECONDS 20U
 #define MIC_TTS_RING_PUSH_WAIT_MS 2U
 #define MIC_TTS_RING_PUSH_MAX_WAIT_MS 1200U
@@ -369,10 +368,10 @@ static esp_err_t tts_stream_chunk_cb(const int16_t *samples, uint16_t sample_cou
         stats->first_chunk_tick = now;
         stats->diag_last_log_tick = now;
         uint32_t latency_ms = (uint32_t)((now - stats->started_tick) * portTICK_PERIOD_MS);
-        ESP_LOGW(TAG, "tts stream first pcm chunk latency=%" PRIu32 "ms samples=%u", latency_ms, (unsigned)sample_count);
+        ESP_LOGD(TAG, "tts stream first pcm chunk latency=%" PRIu32 "ms samples=%u", latency_ms, (unsigned)sample_count);
         if (!stats->first_chunk_event_posted) {
             stats->first_chunk_event_posted = true;
-            mic_task_events_post_tts_stream_started(stats->capture_id, MIC_TTS_STREAM_STARTED_MARKER);
+            mic_task_events_post_tts_stream_started(stats->capture_id);
         }
     }
 
@@ -570,25 +569,11 @@ void mic_task_tts_pipeline_play(uint32_t capture_id,
                  stats.first_chunk_logged ? 1U : 0U);
         mic_task_events_post_tts_error(err);
     } else {
-        uint32_t rx_span_ms = 0U;
-        if (stats.first_chunk_logged && stats.last_chunk_tick >= stats.first_chunk_tick) {
-            rx_span_ms = (uint32_t)((stats.last_chunk_tick - stats.first_chunk_tick) * portTICK_PERIOD_MS);
-        }
         uint32_t audio_ms_equiv = (uint32_t)(((uint64_t)stats.total_samples * 1000ULL) /
                                              (uint64_t)CONFIG_ORB_AUDIO_I2S_SAMPLE_RATE_HZ);
-        ESP_LOGI(TAG,
-                 "tts test complete total=%" PRIu32 "ms dropped_chunks=%" PRIu32
-                 " underflow_events=%" PRIu32 " underflow_loops=%" PRIu32
-                 " max_ring=%" PRIu32 " chunks=%" PRIu32 " samples=%" PRIu32
-                 " rx_span_ms=%" PRIu32 " audio_ms=%" PRIu32,
+        ESP_LOGI(TAG, "tts play done total=%" PRIu32 "ms chunks=%" PRIu32 " audio_ms=%" PRIu32,
                  total_ms,
-                 stats.dropped_chunks,
-                 stats.underflow_events,
-                 stats.underflow_loops,
-                 stats.max_ring_samples,
                  stats.chunk_count,
-                 stats.total_samples,
-                 rx_span_ms,
                  audio_ms_equiv);
         mic_task_events_post_tts_done(stats.dropped_chunks);
     }

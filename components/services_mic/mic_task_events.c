@@ -105,20 +105,20 @@ void mic_task_events_post_remote_plan_error(uint32_t capture_id, esp_err_t err)
     }
 }
 
-void mic_task_events_post_tts_stream_started(uint32_t capture_id, uint16_t started_marker)
+void mic_task_events_post_tts_stream_started(uint32_t capture_id)
 {
     app_event_t event = { 0 };
-    event.id = APP_EVENT_MIC_REMOTE_PLAN_READY;
+    event.id = APP_EVENT_MIC_TTS_STREAM_STARTED;
     event.source = APP_EVENT_SOURCE_MIC;
     event.timestamp_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
     event.payload.mic.capture_id = capture_id;
     event.payload.mic.level_avg = 0U;
-    event.payload.mic.level_peak = started_marker;
+    event.payload.mic.level_peak = 0U;
     event.payload.mic.intent_id = (uint8_t)ORB_INTENT_UNKNOWN;
     event.payload.mic.intent_confidence_permille = 0U;
 
     if (app_tasking_post_event(&event, CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS) != ESP_OK) {
-        ESP_LOGW(TAG, "failed posting APP_EVENT_MIC_REMOTE_PLAN_READY(stream started)");
+        ESP_LOGW(TAG, "failed posting APP_EVENT_MIC_TTS_STREAM_STARTED");
     }
 }
 

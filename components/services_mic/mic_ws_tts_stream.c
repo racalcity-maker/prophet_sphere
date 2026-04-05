@@ -19,9 +19,9 @@ static void ws_account_tts_chunk_result(mic_ws_state_t *state, portMUX_TYPE *loc
 {
     portENTER_CRITICAL(lock);
     if (err == ESP_OK) {
-        state->tts_chunks_sent++;
+        state->tts.tts_chunks_sent++;
     } else {
-        state->tts_chunks_dropped++;
+        state->tts.tts_chunks_dropped++;
     }
     portEXIT_CRITICAL(lock);
 }
@@ -38,18 +38,18 @@ void mic_ws_tts_stream_flush_tail(mic_ws_state_t *state, portMUX_TYPE *lock)
     bool active = false;
 
     portENTER_CRITICAL(lock);
-    tail_count = state->tts_pcm_tail_count;
-    state->tts_pcm_tail_count = 0U;
-    cb = state->tts_chunk_cb;
-    cb_ctx = state->tts_chunk_cb_ctx;
-    active = state->tts_active;
+    tail_count = state->tts.tts_pcm_tail_count;
+    state->tts.tts_pcm_tail_count = 0U;
+    cb = state->tts.tts_chunk_cb;
+    cb_ctx = state->tts.tts_chunk_cb_ctx;
+    active = state->tts.tts_active;
     portEXIT_CRITICAL(lock);
 
     if (!active || cb == NULL || tail_count == 0U) {
         return;
     }
 
-    esp_err_t err = cb(state->tts_pcm_tail, tail_count, cb_ctx);
+    esp_err_t err = cb(state->tts.tts_pcm_tail, tail_count, cb_ctx);
     ws_account_tts_chunk_result(state, lock, err);
 }
 
@@ -63,7 +63,7 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
         return;
     }
 
-    int16_t *chunk = state->tts_pcm_work;
+    int16_t *chunk = state->tts.tts_pcm_work;
     if (chunk == NULL) {
         return;
     }
@@ -76,17 +76,17 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
     bool active = false;
 
     portENTER_CRITICAL(lock);
-    used = state->tts_pcm_tail_count;
+    used = state->tts.tts_pcm_tail_count;
     if (used > WS_TTS_CHUNK_SAMPLES) {
         used = 0U;
     }
     if (used > 0U) {
-        memcpy(chunk, state->tts_pcm_tail, (size_t)used * sizeof(int16_t));
+        memcpy(chunk, state->tts.tts_pcm_tail, (size_t)used * sizeof(int16_t));
     }
-    state->tts_pcm_tail_count = 0U;
-    cb = state->tts_chunk_cb;
-    cb_ctx = state->tts_chunk_cb_ctx;
-    active = state->tts_active;
+    state->tts.tts_pcm_tail_count = 0U;
+    cb = state->tts.tts_chunk_cb;
+    cb_ctx = state->tts.tts_chunk_cb_ctx;
+    active = state->tts.tts_active;
     portEXIT_CRITICAL(lock);
 
     if (!active || cb == NULL) {
@@ -112,8 +112,8 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
 
     if (used > 0U) {
         portENTER_CRITICAL(lock);
-        state->tts_pcm_tail_count = used;
-        memcpy(state->tts_pcm_tail, chunk, (size_t)used * sizeof(int16_t));
+        state->tts.tts_pcm_tail_count = used;
+        memcpy(state->tts.tts_pcm_tail, chunk, (size_t)used * sizeof(int16_t));
         portEXIT_CRITICAL(lock);
     }
 
@@ -127,35 +127,35 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
     uint32_t sample_rate = 0U;
     portENTER_CRITICAL(lock);
     if (got_sample) {
-        if (state->tts_prev_sample_valid) {
-            int32_t jump = (int32_t)first_sample - (int32_t)state->tts_prev_sample;
+        if (state->tts.tts_prev_sample_valid) {
+            int32_t jump = (int32_t)first_sample - (int32_t)state->tts.tts_prev_sample;
             if (jump < 0) {
                 jump = -jump;
             }
             uint32_t abs_jump = (uint32_t)jump;
-            if (abs_jump > state->tts_boundary_jump_max) {
-                state->tts_boundary_jump_max = abs_jump;
+            if (abs_jump > state->tts.tts_boundary_jump_max) {
+                state->tts.tts_boundary_jump_max = abs_jump;
             }
             if (abs_jump >= WS_TTS_BOUNDARY_JUMP_THRESHOLD) {
-                state->tts_boundary_jump_count++;
+                state->tts.tts_boundary_jump_count++;
             }
         }
-        state->tts_prev_sample = last_sample;
-        state->tts_prev_sample_valid = true;
+        state->tts.tts_prev_sample = last_sample;
+        state->tts.tts_prev_sample_valid = true;
     }
-    state->tts_bytes_rx += (uint32_t)aligned;
-    state->tts_frames_rx++;
-    if (state->tts_last_diag_tick == 0 ||
-        (now - state->tts_last_diag_tick) >= ms_to_ticks_min1(1000U)) {
-        state->tts_last_diag_tick = now;
+    state->tts.tts_bytes_rx += (uint32_t)aligned;
+    state->tts.tts_frames_rx++;
+    if (state->tts.tts_last_diag_tick == 0 ||
+        (now - state->tts.tts_last_diag_tick) >= ms_to_ticks_min1(1000U)) {
+        state->tts.tts_last_diag_tick = now;
         log_diag = true;
-        bytes_rx = state->tts_bytes_rx;
-        frames_rx = state->tts_frames_rx;
-        chunks_ok = state->tts_chunks_sent;
-        chunks_drop = state->tts_chunks_dropped;
-        jumps = state->tts_boundary_jump_count;
-        jump_max = state->tts_boundary_jump_max;
-        sample_rate = state->sample_rate_hz;
+        bytes_rx = state->tts.tts_bytes_rx;
+        frames_rx = state->tts.tts_frames_rx;
+        chunks_ok = state->tts.tts_chunks_sent;
+        chunks_drop = state->tts.tts_chunks_dropped;
+        jumps = state->tts.tts_boundary_jump_count;
+        jump_max = state->tts.tts_boundary_jump_max;
+        sample_rate = state->tts.sample_rate_hz;
     }
     portEXIT_CRITICAL(lock);
 

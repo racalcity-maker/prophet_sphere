@@ -106,6 +106,8 @@ static app_mode_event_id_t map_event_id(app_event_id_t id)
         return APP_MODE_EVENT_MIC_REMOTE_PLAN_READY;
     case APP_EVENT_MIC_REMOTE_PLAN_ERROR:
         return APP_MODE_EVENT_MIC_REMOTE_PLAN_ERROR;
+    case APP_EVENT_MIC_TTS_STREAM_STARTED:
+        return APP_MODE_EVENT_MIC_TTS_STREAM_STARTED;
     case APP_EVENT_MIC_TTS_DONE:
         return APP_MODE_EVENT_MIC_TTS_DONE;
     case APP_EVENT_MIC_TTS_ERROR:
@@ -472,7 +474,9 @@ esp_err_t mode_manager_dispatch_event(const app_event_t *event)
     } else if (event->id == APP_EVENT_AUDIO_DONE || event->id == APP_EVENT_AUDIO_ERROR) {
         mode_event.code = event->payload.scalar.code;
         mode_event.value = event->payload.scalar.value;
-    } else if (event->id == APP_EVENT_MIC_CAPTURE_DONE || event->id == APP_EVENT_MIC_REMOTE_PLAN_READY) {
+    } else if (event->id == APP_EVENT_MIC_CAPTURE_DONE ||
+               event->id == APP_EVENT_MIC_REMOTE_PLAN_READY ||
+               event->id == APP_EVENT_MIC_TTS_STREAM_STARTED) {
         mode_event.code = (int32_t)event->payload.mic.level_peak;
         mode_event.value = event->payload.mic.capture_id;
         mode_event.aux = (uint32_t)event->payload.mic.level_avg;

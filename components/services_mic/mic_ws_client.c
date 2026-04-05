@@ -61,10 +61,119 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static bool time_reached(TickType_t now, TickType_t deadline);
 
+/* The following helpers must be called with s_lock held. */
+static void ws_reset_transport_locked(void)
+{
+    s_ws.transport.client = NULL;
+    s_ws.transport.connected = false;
+    s_ws.transport.rx_len = 0U;
+}
+
+static void ws_reset_kws_locked(void)
+{
+    s_ws.kws.session_active = false;
+    s_ws.kws.start_sent = false;
+    s_ws.kws.active_capture_id = 0U;
+    s_ws.kws.sample_rate_hz = 0U;
+    s_ws.kws.result_ready = false;
+    s_ws.kws.result_capture_id = 0U;
+    s_ws.kws.result_intent = ORB_INTENT_UNKNOWN;
+    s_ws.kws.result_conf_permille = 0U;
+}
+
+static void ws_reset_tts_locked(void)
+{
+    s_ws.tts.tts_active = false;
+    s_ws.tts.tts_done = false;
+    s_ws.tts.tts_failed = false;
+    s_ws.tts.tts_chunk_cb = NULL;
+    s_ws.tts.tts_chunk_cb_ctx = NULL;
+    s_ws.tts.tts_chunks_sent = 0U;
+    s_ws.tts.tts_chunks_dropped = 0U;
+    s_ws.tts.tts_bytes_rx = 0U;
+    s_ws.tts.tts_frames_rx = 0U;
+    s_ws.tts.tts_boundary_jump_count = 0U;
+    s_ws.tts.tts_boundary_jump_max = 0U;
+    s_ws.tts.tts_prev_sample_valid = false;
+    s_ws.tts.tts_prev_sample = 0;
+    s_ws.tts.tts_started_tick = 0U;
+    s_ws.tts.tts_last_diag_tick = 0U;
+    s_ws.tts.tts_pcm_tail_count = 0U;
+    s_ws.tts.sample_rate_hz = 0U;
+}
+
 static TickType_t ms_to_ticks_min1(uint32_t ms)
 {
     TickType_t ticks = pdMS_TO_TICKS(ms);
     return (ticks > 0) ? ticks : 1;
+}
+
+typedef struct {
+    bool done;
+    bool failed;
+    bool connected;
+    uint32_t sent;
+    uint32_t dropped;
+    uint32_t bytes;
+    uint32_t frames;
+    uint32_t boundary_jumps;
+    uint32_t boundary_jump_max;
+    TickType_t started_tick;
+} mic_ws_tts_snapshot_t;
+
+typedef enum {
+    MIC_WS_TTS_TERM_NONE = 0,
+    MIC_WS_TTS_TERM_DONE,
+    MIC_WS_TTS_TERM_REMOTE_FAILED,
+    MIC_WS_TTS_TERM_DISCONNECTED,
+    MIC_WS_TTS_TERM_FIRST_CHUNK_TIMEOUT,
+    MIC_WS_TTS_TERM_STREAM_TIMEOUT,
+} mic_ws_tts_terminal_reason_t;
+
+static void ws_tts_snapshot(mic_ws_tts_snapshot_t *out)
+{
+    if (out == NULL) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+    portENTER_CRITICAL(&s_lock);
+    out->done = s_ws.tts.tts_done;
+    out->failed = s_ws.tts.tts_failed;
+    out->connected = s_ws.transport.connected;
+    out->sent = s_ws.tts.tts_chunks_sent;
+    out->dropped = s_ws.tts.tts_chunks_dropped;
+    out->bytes = s_ws.tts.tts_bytes_rx;
+    out->frames = s_ws.tts.tts_frames_rx;
+    out->boundary_jumps = s_ws.tts.tts_boundary_jump_count;
+    out->boundary_jump_max = s_ws.tts.tts_boundary_jump_max;
+    out->started_tick = s_ws.tts.tts_started_tick;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+static mic_ws_tts_terminal_reason_t ws_tts_eval_terminal(const mic_ws_tts_snapshot_t *snapshot,
+                                                         TickType_t now_tick,
+                                                         TickType_t first_chunk_deadline,
+                                                         TickType_t stream_deadline)
+{
+    if (snapshot == NULL) {
+        return MIC_WS_TTS_TERM_REMOTE_FAILED;
+    }
+    if (snapshot->done) {
+        return MIC_WS_TTS_TERM_DONE;
+    }
+    if (snapshot->failed) {
+        return MIC_WS_TTS_TERM_REMOTE_FAILED;
+    }
+    if (!snapshot->connected) {
+        return MIC_WS_TTS_TERM_DISCONNECTED;
+    }
+    if (snapshot->frames == 0U && time_reached(now_tick, first_chunk_deadline)) {
+        return MIC_WS_TTS_TERM_FIRST_CHUNK_TIMEOUT;
+    }
+    if (time_reached(now_tick, stream_deadline)) {
+        return MIC_WS_TTS_TERM_STREAM_TIMEOUT;
+    }
+    return MIC_WS_TTS_TERM_NONE;
 }
 
 static uint32_t ws_effective_send_timeout_ms(void)
@@ -84,7 +193,7 @@ static bool ws_wait_connected(esp_websocket_client_handle_t client, uint32_t tim
     while (!time_reached(xTaskGetTickCount(), deadline)) {
         bool connected = false;
         portENTER_CRITICAL(&s_lock);
-        connected = s_ws.connected;
+        connected = s_ws.transport.connected;
         portEXIT_CRITICAL(&s_lock);
         if (connected && esp_websocket_client_is_connected(client)) {
             return true;
@@ -146,8 +255,10 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
 
     if (event_id == WEBSOCKET_EVENT_CONNECTED) {
         portENTER_CRITICAL(&s_lock);
-        s_ws.connected = true;
-        s_ws.start_sent = false;
+        s_ws.transport.connected = true;
+        if (s_ws.mode == MIC_WS_MODE_KWS) {
+            s_ws.kws.start_sent = false;
+        }
         portEXIT_CRITICAL(&s_lock);
         return;
     }
@@ -159,15 +270,17 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
         bool tts_done = false;
         portENTER_CRITICAL(&s_lock);
         was_tts = (s_ws.mode == MIC_WS_MODE_TTS);
-        tts_active = s_ws.tts_active;
-        tts_done = s_ws.tts_done;
-        s_ws.connected = false;
-        s_ws.start_sent = false;
-        s_ws.rx_len = 0U;
-        s_ws.tts_pcm_tail_count = 0U;
-        if (s_ws.mode == MIC_WS_MODE_TTS && s_ws.tts_active && !s_ws.tts_done) {
-            s_ws.tts_failed = true;
-            s_ws.tts_active = false;
+        tts_active = s_ws.tts.tts_active;
+        tts_done = s_ws.tts.tts_done;
+        s_ws.transport.connected = false;
+        s_ws.transport.rx_len = 0U;
+        if (s_ws.mode == MIC_WS_MODE_KWS) {
+            s_ws.kws.start_sent = false;
+        }
+        s_ws.tts.tts_pcm_tail_count = 0U;
+        if (s_ws.mode == MIC_WS_MODE_TTS && s_ws.tts.tts_active && !s_ws.tts.tts_done) {
+            s_ws.tts.tts_failed = true;
+            s_ws.tts.tts_active = false;
         }
         portEXIT_CRITICAL(&s_lock);
         if (was_tts && tts_active && !tts_done) {
@@ -194,26 +307,26 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
     portENTER_CRITICAL(&s_lock);
     mode = s_ws.mode;
     if (ev->payload_offset == 0) {
-        s_ws.rx_len = 0U;
+        s_ws.transport.rx_len = 0U;
     }
     if (!(mode == MIC_WS_MODE_TTS && op_code != 0x1)) {
-        size_t room = sizeof(s_ws.rx_buf) - 1U - s_ws.rx_len;
+        size_t room = sizeof(s_ws.transport.rx_buf) - 1U - s_ws.transport.rx_len;
         size_t copy = (size_t)ev->data_len;
         if (copy > room) {
             copy = room;
         }
         if (copy > 0U) {
-            memcpy(&s_ws.rx_buf[s_ws.rx_len], ev->data_ptr, copy);
-            s_ws.rx_len += copy;
+            memcpy(&s_ws.transport.rx_buf[s_ws.transport.rx_len], ev->data_ptr, copy);
+            s_ws.transport.rx_len += copy;
         }
-        s_ws.rx_buf[s_ws.rx_len] = '\0';
+        s_ws.transport.rx_buf[s_ws.transport.rx_len] = '\0';
     }
-    active_capture_id = s_ws.active_capture_id;
+    active_capture_id = s_ws.kws.active_capture_id;
 
     if ((ev->payload_offset + ev->data_len) >= ev->payload_len &&
         !(mode == MIC_WS_MODE_TTS && op_code != 0x1)) {
-        memcpy(msg, s_ws.rx_buf, s_ws.rx_len + 1U);
-        s_ws.rx_len = 0U;
+        memcpy(msg, s_ws.transport.rx_buf, s_ws.transport.rx_len + 1U);
+        s_ws.transport.rx_len = 0U;
         message_ready = true;
     }
     portEXIT_CRITICAL(&s_lock);
@@ -228,7 +341,7 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
     }
 
     if (CONFIG_ORB_MIC_WS_LOG_RESULTS) {
-        ESP_LOGI(TAG, "mic ws rx: %s", msg);
+        ESP_LOGD(TAG, "mic ws rx: %s", msg);
     }
 
     if (mode == MIC_WS_MODE_TTS) {
@@ -240,12 +353,12 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
             }
             portENTER_CRITICAL(&s_lock);
             if (done) {
-                s_ws.tts_done = true;
-                s_ws.tts_active = false;
+                s_ws.tts.tts_done = true;
+                s_ws.tts.tts_active = false;
             }
             if (failed) {
-                s_ws.tts_failed = true;
-                s_ws.tts_active = false;
+                s_ws.tts.tts_failed = true;
+                s_ws.tts.tts_active = false;
             }
             portEXIT_CRITICAL(&s_lock);
             if (failed) {
@@ -266,10 +379,10 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
     }
 
     portENTER_CRITICAL(&s_lock);
-    s_ws.result_capture_id = result_capture_id;
-    s_ws.result_intent = intent_id;
-    s_ws.result_conf_permille = conf_permille;
-    s_ws.result_ready = true;
+    s_ws.kws.result_capture_id = result_capture_id;
+    s_ws.kws.result_intent = intent_id;
+    s_ws.kws.result_conf_permille = conf_permille;
+    s_ws.kws.result_ready = true;
     portEXIT_CRITICAL(&s_lock);
 
     ESP_LOGI(TAG,
@@ -308,31 +421,11 @@ void mic_ws_client_abort(void)
     esp_websocket_client_handle_t client = NULL;
 
     portENTER_CRITICAL(&s_lock);
-    client = s_ws.client;
-    s_ws.client = NULL;
-    s_ws.connected = false;
-    s_ws.session_active = false;
-    s_ws.start_sent = false;
-    s_ws.active_capture_id = 0U;
-    s_ws.sample_rate_hz = 0U;
-    s_ws.rx_len = 0U;
+    client = s_ws.transport.client;
+    ws_reset_transport_locked();
+    ws_reset_kws_locked();
+    ws_reset_tts_locked();
     s_ws.mode = MIC_WS_MODE_NONE;
-    s_ws.tts_active = false;
-    s_ws.tts_done = false;
-    s_ws.tts_failed = false;
-    s_ws.tts_chunk_cb = NULL;
-    s_ws.tts_chunk_cb_ctx = NULL;
-    s_ws.tts_chunks_sent = 0U;
-    s_ws.tts_chunks_dropped = 0U;
-    s_ws.tts_bytes_rx = 0U;
-    s_ws.tts_frames_rx = 0U;
-    s_ws.tts_boundary_jump_count = 0U;
-    s_ws.tts_boundary_jump_max = 0U;
-    s_ws.tts_prev_sample_valid = false;
-    s_ws.tts_prev_sample = 0;
-    s_ws.tts_started_tick = 0U;
-    s_ws.tts_last_diag_tick = 0U;
-    s_ws.tts_pcm_tail_count = 0U;
     portEXIT_CRITICAL(&s_lock);
 
     if (client != NULL) {
@@ -367,81 +460,87 @@ esp_err_t mic_ws_client_session_start(uint32_t capture_id, uint32_t sample_rate_
         ESP_RETURN_ON_ERROR(mic_ws_client_init(), TAG, "mic ws init failed");
     }
 
-    mic_ws_client_abort();
-
-    esp_websocket_client_config_t cfg = { 0 };
-        cfg.uri = CONFIG_ORB_MIC_WS_URL;
-        /* Connection/handshake path must use connect timeout, not per-chunk send timeout. */
-        cfg.network_timeout_ms = CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS;
-        cfg.reconnect_timeout_ms = CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS;
-        cfg.disable_auto_reconnect = true;
-        cfg.buffer_size = 4096;
-        cfg.task_stack = WS_CLIENT_TASK_STACK_BYTES;
-
-    esp_websocket_client_handle_t client = esp_websocket_client_init(&cfg);
-    if (client == NULL) {
-        return ESP_FAIL;
+    esp_websocket_client_handle_t client = NULL;
+    bool reuse_connection = false;
+    bool connected_snapshot = false;
+    bool tts_active_snapshot = false;
+    portENTER_CRITICAL(&s_lock);
+    client = s_ws.transport.client;
+    connected_snapshot = s_ws.transport.connected;
+    tts_active_snapshot = s_ws.tts.tts_active;
+    portEXIT_CRITICAL(&s_lock);
+    if (client != NULL &&
+        connected_snapshot &&
+        !tts_active_snapshot &&
+        esp_websocket_client_is_connected(client)) {
+        reuse_connection = true;
     }
 
-    esp_err_t err = esp_websocket_register_events(client, WEBSOCKET_EVENT_ANY, websocket_event_handler, NULL);
-    if (err != ESP_OK) {
-        (void)esp_websocket_client_destroy(client);
-        return err;
-    }
+    if (!reuse_connection) {
+        mic_ws_client_abort();
 
-    err = esp_websocket_client_start(client);
-    if (err != ESP_OK) {
-        (void)esp_websocket_client_destroy(client);
-        return err;
+        esp_websocket_client_config_t cfg = { 0 };
+            cfg.uri = CONFIG_ORB_MIC_WS_URL;
+            /* Connection/handshake path must use connect timeout, not per-chunk send timeout. */
+            cfg.network_timeout_ms = CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS;
+            cfg.reconnect_timeout_ms = CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS;
+            cfg.disable_auto_reconnect = true;
+            cfg.buffer_size = 4096;
+            cfg.task_stack = WS_CLIENT_TASK_STACK_BYTES;
+
+        client = esp_websocket_client_init(&cfg);
+        if (client == NULL) {
+            return ESP_FAIL;
+        }
+
+        esp_err_t err = esp_websocket_register_events(client, WEBSOCKET_EVENT_ANY, websocket_event_handler, NULL);
+        if (err != ESP_OK) {
+            (void)esp_websocket_client_destroy(client);
+            return err;
+        }
+
+        err = esp_websocket_client_start(client);
+        if (err != ESP_OK) {
+            (void)esp_websocket_client_destroy(client);
+            return err;
+        }
     }
 
     portENTER_CRITICAL(&s_lock);
-    s_ws.client = client;
-    s_ws.connected = false;
-    s_ws.session_active = false;
-    s_ws.start_sent = false;
-    s_ws.active_capture_id = capture_id;
-    s_ws.sample_rate_hz = sample_rate_hz;
-    s_ws.result_ready = false;
-    s_ws.result_capture_id = 0U;
-    s_ws.result_intent = ORB_INTENT_UNKNOWN;
-    s_ws.result_conf_permille = 0U;
+    s_ws.transport.client = client;
+    s_ws.transport.connected = reuse_connection ? true : false;
+    s_ws.transport.rx_len = 0U;
+    ws_reset_kws_locked();
+    ws_reset_tts_locked();
+    s_ws.kws.active_capture_id = capture_id;
+    s_ws.kws.sample_rate_hz = sample_rate_hz;
     s_ws.mode = MIC_WS_MODE_KWS;
-    s_ws.tts_active = false;
-    s_ws.tts_done = false;
-    s_ws.tts_failed = false;
-    s_ws.tts_chunk_cb = NULL;
-    s_ws.tts_chunk_cb_ctx = NULL;
-    s_ws.tts_chunks_sent = 0U;
-    s_ws.tts_chunks_dropped = 0U;
-    s_ws.tts_boundary_jump_count = 0U;
-    s_ws.tts_boundary_jump_max = 0U;
-    s_ws.tts_prev_sample_valid = false;
-    s_ws.tts_prev_sample = 0;
     portEXIT_CRITICAL(&s_lock);
 
-    TickType_t deadline = xTaskGetTickCount() + ms_to_ticks_min1(CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS);
-    while (!time_reached(xTaskGetTickCount(), deadline)) {
-        if (esp_websocket_client_is_connected(client)) {
-            break;
+    if (!reuse_connection) {
+        TickType_t deadline = xTaskGetTickCount() + ms_to_ticks_min1(CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS);
+        while (!time_reached(xTaskGetTickCount(), deadline)) {
+            if (esp_websocket_client_is_connected(client)) {
+                break;
+            }
+            vTaskDelay(ms_to_ticks_min1(10U));
         }
-        vTaskDelay(ms_to_ticks_min1(10U));
+
+        if (!esp_websocket_client_is_connected(client)) {
+            mic_ws_client_abort();
+            return ESP_ERR_TIMEOUT;
+        }
     }
 
-    if (!esp_websocket_client_is_connected(client)) {
-        mic_ws_client_abort();
-        return ESP_ERR_TIMEOUT;
-    }
-
-    err = ws_send_start_frame(client, capture_id, sample_rate_hz);
+    esp_err_t err = ws_send_start_frame(client, capture_id, sample_rate_hz);
     if (err != ESP_OK) {
         mic_ws_client_abort();
         return err;
     }
 
     portENTER_CRITICAL(&s_lock);
-    s_ws.session_active = true;
-    s_ws.start_sent = true;
+    s_ws.kws.session_active = true;
+    s_ws.kws.start_sent = true;
     portEXIT_CRITICAL(&s_lock);
     return ESP_OK;
 }
@@ -462,12 +561,12 @@ esp_err_t mic_ws_client_session_send_pcm16(const int16_t *samples, uint16_t samp
     uint32_t capture_id = 0U;
     uint32_t sample_rate_hz = 0U;
     portENTER_CRITICAL(&s_lock);
-    client = s_ws.client;
-    session_active = s_ws.session_active;
-    connected = s_ws.connected;
-    start_sent = s_ws.start_sent;
-    capture_id = s_ws.active_capture_id;
-    sample_rate_hz = s_ws.sample_rate_hz;
+    client = s_ws.transport.client;
+    session_active = s_ws.kws.session_active;
+    connected = s_ws.transport.connected;
+    start_sent = s_ws.kws.start_sent;
+    capture_id = s_ws.kws.active_capture_id;
+    sample_rate_hz = s_ws.kws.sample_rate_hz;
     portEXIT_CRITICAL(&s_lock);
 
     if (client == NULL || !session_active) {
@@ -485,7 +584,7 @@ esp_err_t mic_ws_client_session_send_pcm16(const int16_t *samples, uint16_t samp
             return start_err;
         }
         portENTER_CRITICAL(&s_lock);
-        s_ws.start_sent = true;
+        s_ws.kws.start_sent = true;
         portEXIT_CRITICAL(&s_lock);
     }
 
@@ -508,9 +607,9 @@ esp_err_t mic_ws_client_session_finish(void)
     uint32_t capture_id = 0U;
     bool session_active = false;
     portENTER_CRITICAL(&s_lock);
-    client = s_ws.client;
-    capture_id = s_ws.active_capture_id;
-    session_active = s_ws.session_active;
+    client = s_ws.transport.client;
+    capture_id = s_ws.kws.active_capture_id;
+    session_active = s_ws.kws.session_active;
     portEXIT_CRITICAL(&s_lock);
 
     if (client == NULL || !session_active || !esp_websocket_client_is_connected(client)) {
@@ -551,11 +650,11 @@ esp_err_t mic_ws_client_take_result(uint32_t capture_id,
         uint16_t conf = 0U;
 
         portENTER_CRITICAL(&s_lock);
-        if (s_ws.result_ready) {
+        if (s_ws.kws.result_ready) {
             ready = true;
-            result_capture_id = s_ws.result_capture_id;
-            intent_id = s_ws.result_intent;
-            conf = s_ws.result_conf_permille;
+            result_capture_id = s_ws.kws.result_capture_id;
+            intent_id = s_ws.kws.result_intent;
+            conf = s_ws.kws.result_conf_permille;
         }
         portEXIT_CRITICAL(&s_lock);
 
@@ -563,9 +662,9 @@ esp_err_t mic_ws_client_take_result(uint32_t capture_id,
             *out_intent = intent_id;
             *out_confidence_permille = conf;
             portENTER_CRITICAL(&s_lock);
-            s_ws.result_ready = false;
-            s_ws.session_active = false;
-            s_ws.start_sent = false;
+            s_ws.kws.result_ready = false;
+            s_ws.kws.session_active = false;
+            s_ws.kws.start_sent = false;
             portEXIT_CRITICAL(&s_lock);
             return ESP_OK;
         }
@@ -599,8 +698,8 @@ esp_err_t mic_ws_client_tts_play(const char *text,
     bool reuse_connection = false;
     bool connected = false;
     portENTER_CRITICAL(&s_lock);
-    client = s_ws.client;
-    connected = s_ws.connected;
+    client = s_ws.transport.client;
+    connected = s_ws.transport.connected;
     portEXIT_CRITICAL(&s_lock);
     if (client != NULL && connected && esp_websocket_client_is_connected(client)) {
         reuse_connection = true;
@@ -634,31 +733,29 @@ esp_err_t mic_ws_client_tts_play(const char *text,
     }
 
     portENTER_CRITICAL(&s_lock);
-    s_ws.client = client;
-    s_ws.connected = reuse_connection ? true : false;
-    s_ws.session_active = false;
-    s_ws.start_sent = false;
-    s_ws.active_capture_id = 0U;
-    s_ws.sample_rate_hz = sample_rate_hz;
-    s_ws.result_ready = false;
+    s_ws.transport.client = client;
+    s_ws.transport.connected = reuse_connection ? true : false;
+    s_ws.transport.rx_len = 0U;
+    ws_reset_kws_locked();
+    ws_reset_tts_locked();
     s_ws.mode = MIC_WS_MODE_TTS;
-    s_ws.tts_active = true;
-    s_ws.tts_done = false;
-    s_ws.tts_failed = false;
-    s_ws.tts_chunk_cb = chunk_cb;
-    s_ws.tts_chunk_cb_ctx = chunk_cb_ctx;
-    s_ws.tts_chunks_sent = 0U;
-    s_ws.tts_chunks_dropped = 0U;
-    s_ws.tts_bytes_rx = 0U;
-    s_ws.tts_frames_rx = 0U;
-    s_ws.tts_boundary_jump_count = 0U;
-    s_ws.tts_boundary_jump_max = 0U;
-    s_ws.tts_prev_sample_valid = false;
-    s_ws.tts_prev_sample = 0;
-    s_ws.tts_started_tick = xTaskGetTickCount();
-    s_ws.tts_last_diag_tick = 0U;
-    s_ws.tts_pcm_tail_count = 0U;
-    s_ws.rx_len = 0U;
+    s_ws.tts.tts_active = true;
+    s_ws.tts.tts_done = false;
+    s_ws.tts.tts_failed = false;
+    s_ws.tts.tts_chunk_cb = chunk_cb;
+    s_ws.tts.tts_chunk_cb_ctx = chunk_cb_ctx;
+    s_ws.tts.tts_chunks_sent = 0U;
+    s_ws.tts.tts_chunks_dropped = 0U;
+    s_ws.tts.tts_bytes_rx = 0U;
+    s_ws.tts.tts_frames_rx = 0U;
+    s_ws.tts.tts_boundary_jump_count = 0U;
+    s_ws.tts.tts_boundary_jump_max = 0U;
+    s_ws.tts.tts_prev_sample_valid = false;
+    s_ws.tts.tts_prev_sample = 0;
+    s_ws.tts.tts_started_tick = xTaskGetTickCount();
+    s_ws.tts.tts_last_diag_tick = 0U;
+    s_ws.tts.tts_pcm_tail_count = 0U;
+    s_ws.tts.sample_rate_hz = sample_rate_hz;
     portEXIT_CRITICAL(&s_lock);
 
     if (!reuse_connection && !ws_wait_connected(client, CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS)) {
@@ -675,52 +772,33 @@ esp_err_t mic_ws_client_tts_play(const char *text,
     TickType_t start_tick = xTaskGetTickCount();
     TickType_t deadline = start_tick + ms_to_ticks_min1(timeout_ms);
     TickType_t first_chunk_deadline = start_tick + ms_to_ticks_min1(CONFIG_ORB_MIC_WS_TTS_FIRST_CHUNK_TIMEOUT_MS);
-    while (!time_reached(xTaskGetTickCount(), deadline)) {
-        bool done = false;
-        bool failed = false;
-        bool connected = false;
-        uint32_t sent = 0U;
-        uint32_t dropped = 0U;
-        uint32_t bytes = 0U;
-        uint32_t frames = 0U;
-        uint32_t boundary_jumps = 0U;
-        uint32_t boundary_jump_max = 0U;
-        TickType_t started_tick = 0;
-        portENTER_CRITICAL(&s_lock);
-        done = s_ws.tts_done;
-        failed = s_ws.tts_failed;
-        connected = s_ws.connected;
-        sent = s_ws.tts_chunks_sent;
-        dropped = s_ws.tts_chunks_dropped;
-        bytes = s_ws.tts_bytes_rx;
-        frames = s_ws.tts_frames_rx;
-        boundary_jumps = s_ws.tts_boundary_jump_count;
-        boundary_jump_max = s_ws.tts_boundary_jump_max;
-        started_tick = s_ws.tts_started_tick;
-        portEXIT_CRITICAL(&s_lock);
-
+    /* Unified terminal/cancellation model for TTS stream:
+     * done | remote_failed | disconnected | first_chunk_timeout | stream_timeout.
+     * Exactly one terminal branch owns abort + return policy. */
+    for (;;) {
         TickType_t now_tick = xTaskGetTickCount();
-        if (frames == 0U && !done && !failed && connected && time_reached(now_tick, first_chunk_deadline)) {
-            uint32_t wait_ms = (uint32_t)((now_tick - start_tick) * portTICK_PERIOD_MS);
-            ESP_LOGW(TAG,
-                     "mic ws tts no first audio chunk within %" PRIu32 "ms (waited=%" PRIu32 "ms), abort",
-                     (uint32_t)CONFIG_ORB_MIC_WS_TTS_FIRST_CHUNK_TIMEOUT_MS,
-                     wait_ms);
-            mic_ws_client_abort();
-            return ESP_ERR_TIMEOUT;
+        mic_ws_tts_snapshot_t snapshot;
+        ws_tts_snapshot(&snapshot);
+
+        mic_ws_tts_terminal_reason_t term =
+            ws_tts_eval_terminal(&snapshot, now_tick, first_chunk_deadline, deadline);
+
+        if (term == MIC_WS_TTS_TERM_NONE) {
+            vTaskDelay(ms_to_ticks_min1(10U));
+            continue;
         }
 
-        if (done) {
-            uint32_t wall_ms = (uint32_t)((xTaskGetTickCount() - started_tick) * portTICK_PERIOD_MS);
+        if (term == MIC_WS_TTS_TERM_DONE) {
+            uint32_t wall_ms = (uint32_t)((xTaskGetTickCount() - snapshot.started_tick) * portTICK_PERIOD_MS);
             uint32_t audio_ms =
-                (sample_rate_hz > 0U) ? (bytes * 1000U / (sample_rate_hz * (uint32_t)sizeof(int16_t))) : 0U;
-            if (frames == 0U || bytes == 0U) {
+                (sample_rate_hz > 0U) ? (snapshot.bytes * 1000U / (sample_rate_hz * (uint32_t)sizeof(int16_t))) : 0U;
+            if (snapshot.frames == 0U || snapshot.bytes == 0U) {
                 ESP_LOGW(TAG,
                          "mic ws tts done without audio payload wall_ms=%" PRIu32
                          " frames=%" PRIu32 " bytes=%" PRIu32,
                          wall_ms,
-                         frames,
-                         bytes);
+                         snapshot.frames,
+                         snapshot.bytes);
                 mic_ws_client_abort();
                 return ESP_ERR_INVALID_RESPONSE;
             }
@@ -730,33 +808,55 @@ esp_err_t mic_ws_client_tts_play(const char *text,
                      " jumps=%" PRIu32 " jump_max=%" PRIu32,
                      wall_ms,
                      audio_ms,
-                     frames,
-                     sent,
-                     dropped,
-                     boundary_jumps,
-                     boundary_jump_max);
+                     snapshot.frames,
+                     snapshot.sent,
+                     snapshot.dropped,
+                     snapshot.boundary_jumps,
+                     snapshot.boundary_jump_max);
             mic_ws_client_abort();
             return ESP_OK;
         }
-        if (failed || !connected) {
-            ESP_LOGW(TAG,
-                     "mic ws tts failed state: failed=%d connected=%d frames=%" PRIu32
-                     " bytes=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32
-                     " jumps=%" PRIu32 " jump_max=%" PRIu32,
-                     failed ? 1 : 0,
-                     connected ? 1 : 0,
-                     frames,
-                     bytes,
-                     sent,
-                     dropped,
-                     boundary_jumps,
-                     boundary_jump_max);
-            mic_ws_client_abort();
-            return ESP_FAIL;
-        }
-        vTaskDelay(ms_to_ticks_min1(10U));
-    }
 
-    mic_ws_client_abort();
-    return ESP_ERR_TIMEOUT;
+        if (term == MIC_WS_TTS_TERM_FIRST_CHUNK_TIMEOUT) {
+            uint32_t wait_ms = (uint32_t)((now_tick - start_tick) * portTICK_PERIOD_MS);
+            ESP_LOGW(TAG,
+                     "mic ws tts no first audio chunk within %" PRIu32 "ms (waited=%" PRIu32 "ms), abort",
+                     (uint32_t)CONFIG_ORB_MIC_WS_TTS_FIRST_CHUNK_TIMEOUT_MS,
+                     wait_ms);
+            mic_ws_client_abort();
+            return ESP_ERR_TIMEOUT;
+        }
+
+        if (term == MIC_WS_TTS_TERM_STREAM_TIMEOUT) {
+            ESP_LOGW(TAG,
+                     "mic ws tts stream timeout: frames=%" PRIu32 " bytes=%" PRIu32
+                     " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32
+                     " jumps=%" PRIu32 " jump_max=%" PRIu32,
+                     snapshot.frames,
+                     snapshot.bytes,
+                     snapshot.sent,
+                     snapshot.dropped,
+                     snapshot.boundary_jumps,
+                     snapshot.boundary_jump_max);
+            mic_ws_client_abort();
+            return ESP_ERR_TIMEOUT;
+        }
+
+        ESP_LOGW(TAG,
+                 "mic ws tts failed state: reason=%s failed=%d connected=%d frames=%" PRIu32
+                 " bytes=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32
+                 " jumps=%" PRIu32 " jump_max=%" PRIu32,
+                 (term == MIC_WS_TTS_TERM_DISCONNECTED) ? "disconnected" : "remote_failed",
+                 snapshot.failed ? 1 : 0,
+                 snapshot.connected ? 1 : 0,
+                 snapshot.frames,
+                 snapshot.bytes,
+                 snapshot.sent,
+                 snapshot.dropped,
+                 snapshot.boundary_jumps,
+                 snapshot.boundary_jump_max);
+        mic_ws_client_abort();
+        return ESP_FAIL;
+    }
 }
+

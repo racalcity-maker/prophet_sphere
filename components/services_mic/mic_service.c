@@ -144,29 +144,7 @@ esp_err_t mic_service_play_tts_text(const char *text,
                    text);
     cmd.payload.tts_play.timeout_ms = stream_timeout_ms;
     cmd.payload.tts_play.bg_fade_out_ms = bg_fade_out_ms;
-    audio_command_t audio_cmd = { .id = AUDIO_CMD_PCM_STREAM_START };
-    esp_err_t audio_err = app_tasking_send_audio_command(&audio_cmd, timeout_ms);
-    if (audio_err != ESP_OK) {
-        ESP_LOGW(TAG, "failed to start audio pcm stream for tts: %s", esp_err_to_name(audio_err));
-        return audio_err;
-    }
-
-    esp_err_t mic_err = app_tasking_send_mic_command(&cmd, timeout_ms);
-    if (mic_err != ESP_OK) {
-        audio_command_t stop_cmd = { .id = AUDIO_CMD_PCM_STREAM_STOP };
-        esp_err_t rollback_err = app_tasking_send_audio_command(&stop_cmd, timeout_ms);
-        if (rollback_err != ESP_OK) {
-            ESP_LOGW(TAG,
-                     "mic tts command failed (%s), and pcm rollback failed: %s",
-                     esp_err_to_name(mic_err),
-                     esp_err_to_name(rollback_err));
-        } else {
-            ESP_LOGW(TAG, "mic tts command failed (%s), rolled back pcm stream", esp_err_to_name(mic_err));
-        }
-        return mic_err;
-    }
-
-    return ESP_OK;
+    return app_tasking_send_mic_command(&cmd, timeout_ms);
 }
 
 esp_err_t mic_service_get_status(mic_capture_status_t *out_status)

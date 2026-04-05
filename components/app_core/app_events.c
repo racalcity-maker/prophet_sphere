@@ -25,6 +25,8 @@ const char *app_event_id_to_str(app_event_id_t id)
         return "APP_EVENT_MIC_REMOTE_PLAN_READY";
     case APP_EVENT_MIC_REMOTE_PLAN_ERROR:
         return "APP_EVENT_MIC_REMOTE_PLAN_ERROR";
+    case APP_EVENT_MIC_TTS_STREAM_STARTED:
+        return "APP_EVENT_MIC_TTS_STREAM_STARTED";
     case APP_EVENT_MIC_TTS_DONE:
         return "APP_EVENT_MIC_TTS_DONE";
     case APP_EVENT_MIC_TTS_ERROR:

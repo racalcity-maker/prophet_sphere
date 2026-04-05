@@ -34,7 +34,6 @@ static const char *TAG = LOG_TAG_MODE_HYBRID;
 #define HYBRID_REMOTE_STREAM_MAX_MS 90000U
 #define HYBRID_REMOTE_INTRO_STREAM_MAX_MS 30000U
 #define HYBRID_WS_TIMEOUT_TIMER_CODE 6
-#define HYBRID_TTS_STREAM_STARTED_MARKER UINT16_MAX
 #define HYBRID_REMOTE_INTRO_TTS_TEXT "__ORACLE_INTRO__"
 #define HYBRID_REMOTE_ANSWER_TTS_TEXT "__ORACLE_AUTO__"
 #define HYBRID_REMOTE_RETRY_TTS_TEXT "__ORACLE_RETRY__"
@@ -287,6 +286,8 @@ static const char *event_name(app_mode_event_id_t id)
         return "mic_plan_ready";
     case APP_MODE_EVENT_MIC_REMOTE_PLAN_ERROR:
         return "mic_plan_error";
+    case APP_MODE_EVENT_MIC_TTS_STREAM_STARTED:
+        return "mic_tts_started";
     case APP_MODE_EVENT_MIC_TTS_DONE:
         return "mic_tts_done";
     case APP_MODE_EVENT_MIC_TTS_ERROR:
@@ -533,12 +534,12 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
         }
         break;
 
-    case APP_MODE_EVENT_MIC_REMOTE_PLAN_READY:
+    case APP_MODE_EVENT_MIC_TTS_STREAM_STARTED:
         if ((s_flow != HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE &&
              s_flow != HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE &&
              s_flow != HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE) ||
             s_remote_stream_started ||
-            event->code != (int32_t)HYBRID_TTS_STREAM_STARTED_MARKER) {
+            ((event->value != 0U) && (event->value != s_active_capture_id))) {
             break;
         }
         s_remote_stream_started = true;

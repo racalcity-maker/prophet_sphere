@@ -217,6 +217,7 @@ esp_err_t mode_action_executor_preprocess_event(mode_action_executor_t *executor
     if (event->id == APP_EVENT_MIC_CAPTURE_DONE ||
         event->id == APP_EVENT_MIC_ERROR ||
         event->id == APP_EVENT_MIC_REMOTE_PLAN_READY ||
+        event->id == APP_EVENT_MIC_TTS_STREAM_STARTED ||
         event->id == APP_EVENT_MIC_TTS_DONE ||
         event->id == APP_EVENT_MIC_TTS_ERROR) {
         (void)mode_timers_stop_hybrid_ws_timeout(timers);

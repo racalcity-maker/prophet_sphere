@@ -22,7 +22,7 @@ void mic_task_events_post_remote_plan_ready(uint32_t capture_id,
 
 void mic_task_events_post_remote_plan_error(uint32_t capture_id, esp_err_t err);
 
-void mic_task_events_post_tts_stream_started(uint32_t capture_id, uint16_t started_marker);
+void mic_task_events_post_tts_stream_started(uint32_t capture_id);
 
 void mic_task_events_post_tts_done(uint32_t dropped_chunks);
 

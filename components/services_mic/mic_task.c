@@ -7,6 +7,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 #include "freertos/task.h"
 #include "log_tags.h"
 #include "mic_i2s_hal.h"
@@ -42,6 +43,9 @@ static const char *TAG = LOG_TAG_MIC;
 #define CONFIG_ORB_MIC_TASK_CORE 0
 #endif
 #define MIC_LOOPBACK_READ_TIMEOUT_MS 5U
+#ifndef CONFIG_ORB_MIC_STOP_TIMEOUT_MS
+#define CONFIG_ORB_MIC_STOP_TIMEOUT_MS 1500
+#endif
 #ifndef CONFIG_ORB_MIC_WS_ENABLE
 #define CONFIG_ORB_MIC_WS_ENABLE 0
 #endif
@@ -49,10 +53,120 @@ static TaskHandle_t s_mic_task_handle;
 static QueueHandle_t s_command_queue;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool s_stop_requested;
+static EventGroupHandle_t s_lifecycle_events;
 static mic_capture_status_t s_status;
+
+typedef enum {
+    MIC_TASK_LOOP_CONTINUE = 0,
+    MIC_TASK_LOOP_BREAK,
+} mic_task_loop_action_t;
 
 static void finish_capture(mic_capture_ctx_t *ctx, mic_loopback_ctx_t *loopback, bool post_done);
 static void stop_loopback(mic_capture_ctx_t *capture, mic_loopback_ctx_t *loopback);
+static TickType_t ms_to_ticks_min1(uint32_t ms);
+static bool time_reached(TickType_t now, TickType_t deadline);
+
+#define MIC_TASK_LIFECYCLE_STOP_REQUESTED BIT0
+#define MIC_TASK_LIFECYCLE_STOPPED BIT1
+
+typedef enum {
+    MIC_TASK_STOP_PHASE_REQUESTED = 0,
+    MIC_TASK_STOP_PHASE_DRAINING,
+    MIC_TASK_STOP_PHASE_WAITING,
+    MIC_TASK_STOP_PHASE_COMPLETED,
+    MIC_TASK_STOP_PHASE_TIMEOUT,
+} mic_task_stop_phase_t;
+
+static void mic_task_log_stop_phase(mic_task_stop_phase_t phase)
+{
+    switch (phase) {
+    case MIC_TASK_STOP_PHASE_REQUESTED:
+        ESP_LOGI(TAG, "mic_task stop: requested");
+        break;
+    case MIC_TASK_STOP_PHASE_DRAINING:
+        ESP_LOGI(TAG, "mic_task stop: draining");
+        break;
+    case MIC_TASK_STOP_PHASE_WAITING:
+        ESP_LOGI(TAG, "mic_task stop: waiting");
+        break;
+    case MIC_TASK_STOP_PHASE_COMPLETED:
+        ESP_LOGI(TAG, "mic_task stop: completed");
+        break;
+    case MIC_TASK_STOP_PHASE_TIMEOUT:
+        ESP_LOGW(TAG, "mic_task stop: timeout");
+        break;
+    default:
+        break;
+    }
+}
+
+static void mic_task_request_stop_signal(void)
+{
+    s_stop_requested = true;
+    if (s_lifecycle_events != NULL) {
+        (void)xEventGroupSetBits(s_lifecycle_events, MIC_TASK_LIFECYCLE_STOP_REQUESTED);
+    }
+}
+
+static esp_err_t mic_task_wait_stopped(TickType_t stop_wait_ticks)
+{
+    if (stop_wait_ticks == 0) {
+        stop_wait_ticks = 1;
+    }
+
+    if (s_lifecycle_events != NULL) {
+        EventBits_t bits = xEventGroupWaitBits(s_lifecycle_events,
+                                               MIC_TASK_LIFECYCLE_STOPPED,
+                                               pdFALSE,
+                                               pdFALSE,
+                                               stop_wait_ticks);
+        if ((bits & MIC_TASK_LIFECYCLE_STOPPED) == 0U) {
+            return ESP_ERR_TIMEOUT;
+        }
+        return ESP_OK;
+    }
+
+    TickType_t deadline = xTaskGetTickCount() + stop_wait_ticks;
+    while (s_mic_task_handle != NULL && !time_reached(xTaskGetTickCount(), deadline)) {
+        vTaskDelay(ms_to_ticks_min1(10U));
+    }
+    return (s_mic_task_handle == NULL) ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+static bool mic_task_is_stop_requested(void)
+{
+    if (s_stop_requested) {
+        return true;
+    }
+    EventGroupHandle_t events = s_lifecycle_events;
+    if (events == NULL) {
+        return false;
+    }
+    EventBits_t bits = xEventGroupGetBits(events);
+    return ((bits & MIC_TASK_LIFECYCLE_STOP_REQUESTED) != 0U);
+}
+
+static void mic_task_wake(void)
+{
+    TaskHandle_t handle = s_mic_task_handle;
+    if (handle != NULL) {
+#if defined(INCLUDE_xTaskAbortDelay) && (INCLUDE_xTaskAbortDelay == 1)
+        (void)xTaskAbortDelay(handle);
+#else
+        xTaskNotifyGive(handle);
+        if (s_command_queue != NULL) {
+            mic_command_t wake = { .id = MIC_CMD_NONE };
+            TickType_t wait_ticks = ms_to_ticks_min1(10U);
+            for (uint32_t attempt = 0U; attempt < 3U; ++attempt) {
+                if (xQueueSend(s_command_queue, &wake, wait_ticks) == pdTRUE) {
+                    break;
+                }
+                vTaskDelay(ms_to_ticks_min1(2U));
+            }
+        }
+#endif
+    }
+}
 
 static TickType_t ms_to_ticks_min1(uint32_t ms)
 {
@@ -161,6 +275,109 @@ static const mic_task_flow_ops_t s_flow_ops = {
     .update_status = update_status,
 };
 
+static void process_idle_command_wait(mic_capture_ctx_t *capture, mic_loopback_ctx_t *loopback)
+{
+    if (capture == NULL || loopback == NULL) {
+        return;
+    }
+    mic_command_t cmd = { 0 };
+    BaseType_t got = xQueueReceive(s_command_queue, &cmd, pdMS_TO_TICKS(CONFIG_ORB_QUEUE_RECV_TIMEOUT_MS));
+    if (got == pdTRUE) {
+        mic_task_flow_process_command(capture, loopback, &cmd, &s_flow_ops, TAG);
+    }
+}
+
+static bool process_active_command_poll(mic_capture_ctx_t *capture, mic_loopback_ctx_t *loopback)
+{
+    if (capture == NULL || loopback == NULL) {
+        return false;
+    }
+    mic_command_t cmd = { 0 };
+    if (xQueueReceive(s_command_queue, &cmd, 0) != pdTRUE) {
+        return false;
+    }
+
+    mic_task_flow_process_command(capture, loopback, &cmd, &s_flow_ops, TAG);
+    return (!capture->active && !loopback->active);
+}
+
+static void process_active_capture_iteration(mic_capture_ctx_t *capture,
+                                             mic_loopback_ctx_t *loopback,
+                                             const int32_t *samples,
+                                             size_t sample_count)
+{
+    if (capture == NULL || loopback == NULL || samples == NULL || sample_count == 0U) {
+        return;
+    }
+    mic_task_capture_accumulate_metrics(capture, samples, sample_count);
+    mic_task_capture_push_ws_chunk(capture, samples, sample_count, TAG);
+    update_status(capture, loopback->active);
+
+    if (time_reached(xTaskGetTickCount(), capture->deadline_tick)) {
+        mic_task_capture_finalize_intent(capture, TAG);
+        finish_capture(capture, loopback, true);
+    }
+}
+
+static void process_loopback_iteration(mic_capture_ctx_t *capture,
+                                       mic_loopback_ctx_t *loopback,
+                                       const int32_t *samples,
+                                       size_t sample_count)
+{
+    if (capture == NULL || loopback == NULL || samples == NULL || sample_count == 0U) {
+        return;
+    }
+    stream_loopback_samples(loopback, samples, sample_count);
+    update_status(capture, loopback->active);
+}
+
+static mic_task_loop_action_t process_stream_iteration(mic_capture_ctx_t *capture,
+                                                       mic_loopback_ctx_t *loopback,
+                                                       int32_t *sample_buf,
+                                                       size_t sample_buf_count)
+{
+    if (capture == NULL || loopback == NULL || sample_buf == NULL || sample_buf_count == 0U) {
+        return MIC_TASK_LOOP_CONTINUE;
+    }
+
+    size_t read_samples = 0U;
+    uint32_t read_timeout_ms = loopback->active ? MIC_LOOPBACK_READ_TIMEOUT_MS : (uint32_t)CONFIG_ORB_MIC_READ_TIMEOUT_MS;
+    esp_err_t err = mic_i2s_hal_read_i32(sample_buf, sample_buf_count, &read_samples, read_timeout_ms);
+
+    if (err == ESP_ERR_TIMEOUT) {
+        if (capture->active && time_reached(xTaskGetTickCount(), capture->deadline_tick)) {
+            mic_task_capture_finalize_intent(capture, TAG);
+            finish_capture(capture, loopback, true);
+        }
+        mic_capture_loop_cooperate();
+        return MIC_TASK_LOOP_CONTINUE;
+    }
+
+    if (err != ESP_OK) {
+        if (mic_task_is_stop_requested()) {
+            return MIC_TASK_LOOP_BREAK;
+        }
+        uint32_t failed_id = capture->capture_id;
+        if (capture->active) {
+            finish_capture(capture, loopback, false);
+        }
+        if (loopback->active) {
+            stop_loopback(capture, loopback);
+        }
+        mic_task_events_post_capture_error(failed_id, err);
+        return MIC_TASK_LOOP_CONTINUE;
+    }
+
+    if (capture->active) {
+        process_active_capture_iteration(capture, loopback, sample_buf, read_samples);
+    } else if (loopback->active) {
+        process_loopback_iteration(capture, loopback, sample_buf, read_samples);
+    }
+
+    mic_capture_loop_cooperate();
+    return MIC_TASK_LOOP_CONTINUE;
+}
+
 static void mic_task_entry(void *arg)
 {
     (void)arg;
@@ -178,63 +395,19 @@ static void mic_task_entry(void *arg)
 
     int32_t sample_buf[CONFIG_ORB_MIC_READ_CHUNK_SAMPLES] = { 0 };
 
-    while (!s_stop_requested) {
-        mic_command_t cmd = { 0 };
-
+    while (!mic_task_is_stop_requested()) {
         if (!capture.active && !loopback.active) {
-            BaseType_t got = xQueueReceive(s_command_queue, &cmd, pdMS_TO_TICKS(CONFIG_ORB_QUEUE_RECV_TIMEOUT_MS));
-            if (got == pdTRUE) {
-                mic_task_flow_process_command(&capture, &loopback, &cmd, &s_flow_ops, TAG);
-            }
+            process_idle_command_wait(&capture, &loopback);
             continue;
         }
 
-        if (xQueueReceive(s_command_queue, &cmd, 0) == pdTRUE) {
-            mic_task_flow_process_command(&capture, &loopback, &cmd, &s_flow_ops, TAG);
-            if (!capture.active && !loopback.active) {
-                continue;
-            }
-        }
-
-        size_t read_samples = 0U;
-        uint32_t read_timeout_ms = loopback.active ? MIC_LOOPBACK_READ_TIMEOUT_MS : (uint32_t)CONFIG_ORB_MIC_READ_TIMEOUT_MS;
-        esp_err_t err =
-            mic_i2s_hal_read_i32(sample_buf, CONFIG_ORB_MIC_READ_CHUNK_SAMPLES, &read_samples, read_timeout_ms);
-        if (err == ESP_ERR_TIMEOUT) {
-            if (capture.active && time_reached(xTaskGetTickCount(), capture.deadline_tick)) {
-                mic_task_capture_finalize_intent(&capture, TAG);
-                finish_capture(&capture, &loopback, true);
-            }
-            mic_capture_loop_cooperate();
-            continue;
-        }
-        if (err != ESP_OK) {
-            uint32_t failed_id = capture.capture_id;
-            if (capture.active) {
-                finish_capture(&capture, &loopback, false);
-            }
-            if (loopback.active) {
-                stop_loopback(&capture, &loopback);
-            }
-            mic_task_events_post_capture_error(failed_id, err);
+        if (process_active_command_poll(&capture, &loopback)) {
             continue;
         }
 
-        if (capture.active) {
-            mic_task_capture_accumulate_metrics(&capture, sample_buf, read_samples);
-            mic_task_capture_push_ws_chunk(&capture, sample_buf, read_samples, TAG);
-            update_status(&capture, loopback.active);
-
-            if (time_reached(xTaskGetTickCount(), capture.deadline_tick)) {
-                mic_task_capture_finalize_intent(&capture, TAG);
-                finish_capture(&capture, &loopback, true);
-            }
-        } else if (loopback.active) {
-            stream_loopback_samples(&loopback, sample_buf, read_samples);
-            update_status(&capture, loopback.active);
+        if (process_stream_iteration(&capture, &loopback, sample_buf, CONFIG_ORB_MIC_READ_CHUNK_SAMPLES) == MIC_TASK_LOOP_BREAK) {
+            break;
         }
-
-        mic_capture_loop_cooperate();
     }
 
     if (capture.active) {
@@ -244,6 +417,14 @@ static void mic_task_entry(void *arg)
         stop_loopback(&capture, &loopback);
     }
     (void)mic_i2s_hal_deinit();
+#if CONFIG_ORB_MIC_WS_ENABLE
+    mic_ws_client_deinit();
+#endif
+    s_command_queue = NULL;
+    if (s_lifecycle_events != NULL) {
+        (void)xEventGroupSetBits(s_lifecycle_events, MIC_TASK_LIFECYCLE_STOPPED);
+    }
+    s_stop_requested = false;
     s_mic_task_handle = NULL;
     ESP_LOGI(TAG, "mic_task stopped");
     vTaskDelete(NULL);
@@ -257,9 +438,16 @@ esp_err_t mic_task_start(QueueHandle_t command_queue)
     if (s_mic_task_handle != NULL) {
         return ESP_OK;
     }
+    if (s_lifecycle_events == NULL) {
+        s_lifecycle_events = xEventGroupCreate();
+        if (s_lifecycle_events == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
 
     s_command_queue = command_queue;
     s_stop_requested = false;
+    (void)xEventGroupClearBits(s_lifecycle_events, MIC_TASK_LIFECYCLE_STOP_REQUESTED | MIC_TASK_LIFECYCLE_STOPPED);
     memset(&s_status, 0, sizeof(s_status));
 
     ESP_RETURN_ON_ERROR(mic_i2s_hal_init(), TAG, "mic i2s init failed");
@@ -313,30 +501,36 @@ esp_err_t mic_task_stop(void)
         return ESP_OK;
     }
 
-    s_stop_requested = true;
-    if (s_command_queue != NULL) {
-        mic_command_t cmd1 = { .id = MIC_CMD_STOP_CAPTURE };
-        mic_command_t cmd2 = { .id = MIC_CMD_LOOPBACK_STOP };
-        (void)xQueueSend(s_command_queue, &cmd1, 0);
-        (void)xQueueSend(s_command_queue, &cmd2, 0);
+    TaskHandle_t self = xTaskGetCurrentTaskHandle();
+    if (self == s_mic_task_handle) {
+        mic_task_request_stop_signal();
+        return ESP_OK;
     }
 
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(500);
-    while (s_mic_task_handle != NULL && !time_reached(xTaskGetTickCount(), deadline)) {
-        vTaskDelay(pdMS_TO_TICKS(10));
+    /* Unified stop contract for mic task:
+     * requested -> draining -> waiting -> completed | timeout. */
+    mic_task_log_stop_phase(MIC_TASK_STOP_PHASE_REQUESTED);
+    mic_task_request_stop_signal();
+    if (s_lifecycle_events != NULL) {
+        (void)xEventGroupClearBits(s_lifecycle_events, MIC_TASK_LIFECYCLE_STOPPED);
     }
 
-    if (s_mic_task_handle != NULL) {
-        TaskHandle_t handle = s_mic_task_handle;
-        s_mic_task_handle = NULL;
-        vTaskDelete(handle);
-        (void)mic_i2s_hal_deinit();
-    }
-
+    mic_task_log_stop_phase(MIC_TASK_STOP_PHASE_DRAINING);
 #if CONFIG_ORB_MIC_WS_ENABLE
-    mic_ws_client_deinit();
+    mic_ws_client_abort();
 #endif
-    s_command_queue = NULL;
+    (void)mic_i2s_hal_stop();
+    mic_task_wake();
+
+    mic_task_log_stop_phase(MIC_TASK_STOP_PHASE_WAITING);
+    TickType_t stop_wait_ticks = pdMS_TO_TICKS(CONFIG_ORB_MIC_STOP_TIMEOUT_MS);
+    esp_err_t wait_err = mic_task_wait_stopped(stop_wait_ticks);
+    if (wait_err != ESP_OK) {
+        mic_task_log_stop_phase(MIC_TASK_STOP_PHASE_TIMEOUT);
+        return wait_err;
+    }
+
+    mic_task_log_stop_phase(MIC_TASK_STOP_PHASE_COMPLETED);
     return ESP_OK;
 }
 
