@@ -28,6 +28,7 @@ static const char *KEY_PROPHECY_GAP34_MS = "p_g34";
 static const char *KEY_PROPHECY_LEADIN_MS = "p_lead";
 static const char *KEY_HYBRID_REJECT_TH = "h_rjct";
 static const char *KEY_HYBRID_MIC_CAPTURE_MS = "h_mcap";
+static const char *KEY_HYBRID_UNKNOWN_RETRY = "h_unkr";
 static const char *KEY_PROPHECY_BG_GAIN = "p_bgg";
 static const char *KEY_PROPHECY_BG_FADE_IN_MS = "p_bfi";
 static const char *KEY_PROPHECY_BG_FADE_OUT_MS = "p_bfo";
@@ -136,6 +137,11 @@ esp_err_t config_store_nvs_load(orb_runtime_config_t *cfg, bool *loaded)
     if (nvs_get_u16(handle, KEY_HYBRID_REJECT_TH, &reject_th) == ESP_OK) {
         cfg->hybrid_reject_threshold_permille = reject_th;
     }
+    if (nvs_get_u8(handle, KEY_HYBRID_UNKNOWN_RETRY, &value_u8) == ESP_OK) {
+        if (value_u8 <= 2U) {
+            cfg->hybrid_unknown_retry_max = value_u8;
+        }
+    }
     if (nvs_get_u32(handle, KEY_HYBRID_MIC_CAPTURE_MS, &gap_ms) == ESP_OK) {
         cfg->hybrid_mic_capture_ms = gap_ms;
     }
@@ -210,6 +216,9 @@ esp_err_t config_store_nvs_save(const orb_runtime_config_t *cfg)
     }
     if (err == ESP_OK) {
         err = nvs_set_u16(handle, KEY_HYBRID_REJECT_TH, cfg->hybrid_reject_threshold_permille);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, KEY_HYBRID_UNKNOWN_RETRY, cfg->hybrid_unknown_retry_max);
     }
     if (err == ESP_OK) {
         err = nvs_set_u32(handle, KEY_HYBRID_MIC_CAPTURE_MS, cfg->hybrid_mic_capture_ms);

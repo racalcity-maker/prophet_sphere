@@ -34,6 +34,8 @@ typedef struct {
     uint32_t prophecy_gap34_ms;
     uint32_t prophecy_leadin_wait_ms;
     uint16_t hybrid_reject_threshold_permille;
+    uint8_t hybrid_unknown_retry_max;
+    uint8_t reserved0;
     uint16_t prophecy_bg_gain_permille;
     uint32_t prophecy_bg_fade_in_ms;
     uint32_t prophecy_bg_fade_out_ms;

@@ -116,7 +116,10 @@ esp_err_t mic_service_stop_capture(uint32_t timeout_ms)
     return app_tasking_send_mic_command(&cmd, timeout_ms);
 }
 
-esp_err_t mic_service_play_tts_text(const char *text, uint32_t stream_timeout_ms, uint32_t timeout_ms)
+esp_err_t mic_service_play_tts_text(const char *text,
+                                    uint32_t stream_timeout_ms,
+                                    uint32_t bg_fade_out_ms,
+                                    uint32_t timeout_ms)
 {
     if (!CONFIG_ORB_ENABLE_MIC) {
         return ESP_ERR_NOT_SUPPORTED;
@@ -140,6 +143,7 @@ esp_err_t mic_service_play_tts_text(const char *text, uint32_t stream_timeout_ms
                    "%s",
                    text);
     cmd.payload.tts_play.timeout_ms = stream_timeout_ms;
+    cmd.payload.tts_play.bg_fade_out_ms = bg_fade_out_ms;
     audio_command_t audio_cmd = { .id = AUDIO_CMD_PCM_STREAM_START };
     esp_err_t audio_err = app_tasking_send_audio_command(&audio_cmd, timeout_ms);
     if (audio_err != ESP_OK) {

@@ -147,6 +147,7 @@ typedef struct {
         struct {
             char text[MIC_TTS_TEXT_MAX_LEN];
             uint32_t timeout_ms;
+            uint32_t bg_fade_out_ms;
         } tts_play;
     } payload;
 } mic_command_t;

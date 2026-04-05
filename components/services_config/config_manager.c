@@ -59,6 +59,11 @@ static bool hybrid_params_valid(uint16_t reject_threshold_permille, uint32_t mic
     return reject_threshold_permille <= 1000U && mic_capture_ms >= 1000U && mic_capture_ms <= 60000U;
 }
 
+static bool hybrid_unknown_retry_valid(uint8_t unknown_retry_max)
+{
+    return unknown_retry_max <= 2U;
+}
+
 static bool wifi_sta_credentials_valid(const char *ssid, const char *password)
 {
     if (ssid == NULL || ssid[0] == '\0' || password == NULL) {
@@ -347,6 +352,21 @@ esp_err_t config_manager_set_hybrid_params(uint16_t reject_threshold_permille, u
     }
     s_snapshot.hybrid_reject_threshold_permille = reject_threshold_permille;
     s_snapshot.hybrid_mic_capture_ms = mic_capture_ms;
+    err = save_snapshot_unsafe();
+    xSemaphoreGive(s_cfg_mutex);
+    return err;
+}
+
+esp_err_t config_manager_set_hybrid_unknown_retry_max(uint8_t unknown_retry_max)
+{
+    if (!hybrid_unknown_retry_valid(unknown_retry_max)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    s_snapshot.hybrid_unknown_retry_max = unknown_retry_max;
     err = save_snapshot_unsafe();
     xSemaphoreGive(s_cfg_mutex);
     return err;

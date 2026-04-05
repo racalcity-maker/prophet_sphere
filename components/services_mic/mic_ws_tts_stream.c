@@ -7,6 +7,8 @@
 #include "esp_log.h"
 #include "freertos/task.h"
 
+#define WS_TTS_BOUNDARY_JUMP_THRESHOLD 5000U
+
 static TickType_t ms_to_ticks_min1(uint32_t ms)
 {
     TickType_t ticks = pdMS_TO_TICKS(ms);
@@ -65,6 +67,9 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
     if (chunk == NULL) {
         return;
     }
+    int16_t first_sample = 0;
+    int16_t last_sample = 0;
+    bool got_sample = false;
     uint16_t used = 0U;
     mic_ws_tts_chunk_cb_t cb = NULL;
     void *cb_ctx = NULL;
@@ -92,6 +97,11 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
     size_t aligned = len & ~((size_t)1U);
     for (size_t i = 0U; i < aligned; i += 2U) {
         int16_t sample = (int16_t)((uint16_t)data[i] | ((uint16_t)data[i + 1U] << 8U));
+        if (!got_sample) {
+            first_sample = sample;
+            got_sample = true;
+        }
+        last_sample = sample;
         chunk[used++] = sample;
         if (used == WS_TTS_CHUNK_SAMPLES) {
             esp_err_t err = cb(chunk, used, cb_ctx);
@@ -112,8 +122,27 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
     uint32_t frames_rx = 0U;
     uint32_t chunks_ok = 0U;
     uint32_t chunks_drop = 0U;
+    uint32_t jumps = 0U;
+    uint32_t jump_max = 0U;
     uint32_t sample_rate = 0U;
     portENTER_CRITICAL(lock);
+    if (got_sample) {
+        if (state->tts_prev_sample_valid) {
+            int32_t jump = (int32_t)first_sample - (int32_t)state->tts_prev_sample;
+            if (jump < 0) {
+                jump = -jump;
+            }
+            uint32_t abs_jump = (uint32_t)jump;
+            if (abs_jump > state->tts_boundary_jump_max) {
+                state->tts_boundary_jump_max = abs_jump;
+            }
+            if (abs_jump >= WS_TTS_BOUNDARY_JUMP_THRESHOLD) {
+                state->tts_boundary_jump_count++;
+            }
+        }
+        state->tts_prev_sample = last_sample;
+        state->tts_prev_sample_valid = true;
+    }
     state->tts_bytes_rx += (uint32_t)aligned;
     state->tts_frames_rx++;
     if (state->tts_last_diag_tick == 0 ||
@@ -124,6 +153,8 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
         frames_rx = state->tts_frames_rx;
         chunks_ok = state->tts_chunks_sent;
         chunks_drop = state->tts_chunks_dropped;
+        jumps = state->tts_boundary_jump_count;
+        jump_max = state->tts_boundary_jump_max;
         sample_rate = state->sample_rate_hz;
     }
     portEXIT_CRITICAL(lock);
@@ -132,11 +163,14 @@ void mic_ws_tts_stream_handle_binary(mic_ws_state_t *state,
         uint32_t audio_ms = (sample_rate > 0U) ? (bytes_rx * 1000U / (sample_rate * (uint32_t)sizeof(int16_t))) : 0U;
         ESP_LOGD(log_tag,
                  "mic ws tts rx diag frames=%" PRIu32 " bytes=%" PRIu32
-                 " audio_ms=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32,
+                 " audio_ms=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32
+                 " jumps=%" PRIu32 " jump_max=%" PRIu32,
                  frames_rx,
                  bytes_rx,
                  audio_ms,
                  chunks_ok,
-                 chunks_drop);
+                 chunks_drop,
+                 jumps,
+                 jump_max);
     }
 }

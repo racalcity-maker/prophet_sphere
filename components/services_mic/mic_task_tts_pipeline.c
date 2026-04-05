@@ -91,6 +91,15 @@ static bool push_pcm_stream_chunk(const int16_t *samples, uint16_t sample_count,
     return (app_tasking_send_audio_command(&cmd, timeout_ms) == ESP_OK);
 }
 
+static void enqueue_pcm_tail_silence_best_effort(void)
+{
+    static const int16_t kTailSilence[256] = { 0 };
+    /* Small deterministic tail to keep DMA fed until STOP is processed. */
+    for (uint32_t i = 0U; i < 2U; ++i) {
+        (void)push_pcm_stream_chunk(kTailSilence, (uint16_t)(sizeof(kTailSilence) / sizeof(kTailSilence[0])), 8U);
+    }
+}
+
 static void stop_pcm_stream_best_effort(void)
 {
     audio_command_t stop_cmd = { .id = AUDIO_CMD_PCM_STREAM_STOP };
@@ -102,7 +111,9 @@ static void stop_pcm_stream_best_effort(void)
     for (uint32_t i = 0U; i <= retries; ++i) {
         esp_err_t err = ESP_ERR_TIMEOUT;
         if (q != NULL) {
-            BaseType_t ok = xQueueSendToFront(q, &stop_cmd, timeout_ticks);
+            /* Stop must not overtake already queued PCM chunks, otherwise tail can be cut
+             * and hardware may hold/repeat the last DMA fragment briefly. */
+            BaseType_t ok = xQueueSend(q, &stop_cmd, timeout_ticks);
             if (ok == pdTRUE) {
                 err = ESP_OK;
             }
@@ -117,6 +128,23 @@ static void stop_pcm_stream_best_effort(void)
         }
     }
     ESP_LOGW(TAG, "failed to enqueue PCM stream stop after retries");
+}
+
+static void bg_fade_out_best_effort(uint32_t fade_out_ms)
+{
+    if (fade_out_ms == 0U) {
+        return;
+    }
+    audio_command_t fade_cmd = { 0 };
+    fade_cmd.id = AUDIO_CMD_BG_FADE_OUT;
+    fade_cmd.payload.bg_fade_out.fade_out_ms = fade_out_ms;
+    esp_err_t err = app_tasking_send_audio_command(&fade_cmd, (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "failed to enqueue bg fade-out after tts: %s (fade=%" PRIu32 "ms)",
+                 esp_err_to_name(err),
+                 fade_out_ms);
+    }
 }
 
 static bool tts_ring_init(tts_pcm_ring_t *ring, uint32_t sample_rate_hz)
@@ -403,7 +431,10 @@ static esp_err_t tts_stream_chunk_cb(const int16_t *samples, uint16_t sample_cou
     return ESP_OK;
 }
 
-void mic_task_tts_pipeline_play(uint32_t capture_id, const char *text, uint32_t stream_timeout_ms)
+void mic_task_tts_pipeline_play(uint32_t capture_id,
+                                const char *text,
+                                uint32_t stream_timeout_ms,
+                                uint32_t bg_fade_out_ms)
 {
     if (text == NULL || text[0] == '\0') {
         stop_pcm_stream_best_effort();
@@ -526,7 +557,9 @@ void mic_task_tts_pipeline_play(uint32_t capture_id, const char *text, uint32_t 
                  drain_wait_ms);
     }
     tts_ring_deinit(&ring);
+    enqueue_pcm_tail_silence_best_effort();
     stop_pcm_stream_best_effort();
+    bg_fade_out_best_effort(bg_fade_out_ms);
 
     uint32_t total_ms = (uint32_t)((xTaskGetTickCount() - tts_start_tick) * portTICK_PERIOD_MS);
 

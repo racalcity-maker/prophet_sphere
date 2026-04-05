@@ -1,0 +1,901 @@
+{
+  "version": 1,
+  "subintents": {
+    "love": [
+      {
+        "id": "new_person",
+        "aliases": [
+          "новая любовь",
+          "новый человек"
+        ],
+        "keywords": [
+          "нов",
+          "встреч",
+          "любов"
+        ],
+        "phrases": [
+          "встречу ли кого-то",
+          "появится ли новая любовь"
+        ],
+        "enabled": true,
+        "answer_file": "answers/love/new_person.json"
+      },
+      {
+        "id": "mutual_feelings",
+        "aliases": [
+          "взаимные чувства"
+        ],
+        "keywords": [
+          "чувств",
+          "любит",
+          "нравлюс"
+        ],
+        "phrases": [
+          "любит ли он меня",
+          "есть ли взаимные чувства"
+        ],
+        "enabled": true,
+        "answer_file": "answers/love/mutual_feelings.json"
+      },
+      {
+        "id": "reunion",
+        "aliases": [
+          "возврат",
+          "бывший"
+        ],
+        "keywords": [
+          "вернет",
+          "бывш",
+          "снова",
+          "вместе"
+        ],
+        "phrases": [
+          "вернется ли бывший",
+          "будем ли снова вместе"
+        ],
+        "enabled": true,
+        "answer_file": "answers/love/reunion.json"
+      },
+      {
+        "id": "contact",
+        "aliases": [
+          "связь",
+          "проявление"
+        ],
+        "keywords": [
+          "напиш",
+          "позвон",
+          "связ",
+          "прояв"
+        ],
+        "phrases": [
+          "напишет ли он",
+          "выйдет ли на связь"
+        ],
+        "enabled": true,
+        "answer_file": "answers/love/contact.json"
+      },
+      {
+        "id": "relationship_future",
+        "aliases": [
+          "будущее отношений"
+        ],
+        "keywords": [
+          "будущ",
+          "отношен",
+          "пара"
+        ],
+        "phrases": [
+          "есть ли будущее у нас",
+          "будут ли отношения"
+        ],
+        "enabled": true,
+        "answer_file": "answers/love/relationship_future.json"
+      },
+      {
+        "id": "marriage",
+        "aliases": [
+          "брак",
+          "свадьба"
+        ],
+        "keywords": [
+          "брак",
+          "свад",
+          "жен",
+          "замуж"
+        ],
+        "phrases": [
+          "будет ли брак",
+          "выйду ли замуж"
+        ],
+        "enabled": true,
+        "answer_file": "answers/love/marriage.json"
+      },
+      {
+        "id": "rival",
+        "aliases": [
+          "соперник",
+          "третий человек"
+        ],
+        "keywords": [
+          "сопер",
+          "треть",
+          "кто-то еще"
+        ],
+        "phrases": [
+          "есть ли соперница",
+          "есть ли кто-то еще"
+        ],
+        "enabled": true,
+        "answer_file": "answers/love/rival.json"
+      }
+    ],
+    "person": [
+      {
+        "id": "intentions",
+        "aliases": [
+          "намерения"
+        ],
+        "keywords": [
+          "намерен",
+          "хочет",
+          "ведет"
+        ],
+        "phrases": [
+          "какие у него намерения",
+          "чего он хочет"
+        ],
+        "enabled": true,
+        "answer_file": "answers/person/intentions.json"
+      },
+      {
+        "id": "hidden_thoughts",
+        "aliases": [
+          "мысли",
+          "скрытое"
+        ],
+        "keywords": [
+          "думает",
+          "скрыва",
+          "мысл"
+        ],
+        "phrases": [
+          "что он скрывает",
+          "думает ли он обо мне"
+        ],
+        "enabled": true,
+        "answer_file": "answers/person/hidden_thoughts.json"
+      },
+      {
+        "id": "truthfulness",
+        "aliases": [
+          "честность",
+          "правда"
+        ],
+        "keywords": [
+          "врет",
+          "честн",
+          "правд",
+          "лож"
+        ],
+        "phrases": [
+          "врет ли он",
+          "можно ли ему верить"
+        ],
+        "enabled": true,
+        "answer_file": "answers/person/truthfulness.json"
+      },
+      {
+        "id": "loyalty",
+        "aliases": [
+          "верность",
+          "надежность"
+        ],
+        "keywords": [
+          "верен",
+          "надеж",
+          "предаст"
+        ],
+        "phrases": [
+          "верен ли он",
+          "не предаст ли"
+        ],
+        "enabled": true,
+        "answer_file": "answers/person/loyalty.json"
+      },
+      {
+        "id": "return",
+        "aliases": [
+          "возврат человека"
+        ],
+        "keywords": [
+          "вернет",
+          "обратно",
+          "возврат"
+        ],
+        "phrases": [
+          "вернется ли человек",
+          "придет ли обратно"
+        ],
+        "enabled": true,
+        "answer_file": "answers/person/return.json"
+      },
+      {
+        "id": "contact",
+        "aliases": [
+          "контакт"
+        ],
+        "keywords": [
+          "напиш",
+          "позвон",
+          "прояв"
+        ],
+        "phrases": [
+          "напишет ли первым",
+          "проявится ли сам"
+        ],
+        "enabled": true,
+        "answer_file": "answers/person/contact.json"
+      }
+    ],
+    "choice": [
+      {
+        "id": "should_do",
+        "aliases": [
+          "действовать"
+        ],
+        "keywords": [
+          "стоит",
+          "делать",
+          "начинат",
+          "писат"
+        ],
+        "phrases": [
+          "стоит ли делать",
+          "стоит ли начинать"
+        ],
+        "enabled": true,
+        "answer_file": "answers/choice/should_do.json"
+      },
+      {
+        "id": "should_wait",
+        "aliases": [
+          "подождать"
+        ],
+        "keywords": [
+          "подожд",
+          "рано",
+          "выждат"
+        ],
+        "phrases": [
+          "лучше подождать",
+          "не рано ли действовать"
+        ],
+        "enabled": true,
+        "answer_file": "answers/choice/should_wait.json"
+      },
+      {
+        "id": "option_compare",
+        "aliases": [
+          "сравнение вариантов"
+        ],
+        "keywords": [
+          "или",
+          "вариант",
+          "сравн",
+          "выбрать"
+        ],
+        "phrases": [
+          "вариант а или вариант б",
+          "что выбрать"
+        ],
+        "enabled": true,
+        "answer_file": "answers/choice/option_compare.json"
+      },
+      {
+        "id": "risk_choice",
+        "aliases": [
+          "рискованный выбор"
+        ],
+        "keywords": [
+          "риск",
+          "ввязат",
+          "опас"
+        ],
+        "phrases": [
+          "стоит ли рисковать",
+          "опасен ли выбор"
+        ],
+        "enabled": true,
+        "answer_file": "answers/choice/risk_choice.json"
+      },
+      {
+        "id": "leave_or_stay",
+        "aliases": [
+          "уйти или остаться"
+        ],
+        "keywords": [
+          "уйти",
+          "остать",
+          "отпуст",
+          "заверш"
+        ],
+        "phrases": [
+          "уйти или остаться",
+          "держаться или отпустить"
+        ],
+        "enabled": true,
+        "answer_file": "answers/choice/leave_or_stay.json"
+      }
+    ],
+    "timing": [
+      {
+        "id": "soon",
+        "aliases": [
+          "скоро"
+        ],
+        "keywords": [
+          "скоро",
+          "в ближайш",
+          "скоро ли"
+        ],
+        "phrases": [
+          "когда скоро",
+          "в ближайшее время"
+        ],
+        "enabled": true,
+        "answer_file": "answers/timing/soon.json"
+      },
+      {
+        "id": "later",
+        "aliases": [
+          "позже"
+        ],
+        "keywords": [
+          "позже",
+          "потом",
+          "не сейчас"
+        ],
+        "phrases": [
+          "когда позже",
+          "позднее ли"
+        ],
+        "enabled": true,
+        "answer_file": "answers/timing/later.json"
+      },
+      {
+        "id": "far_future",
+        "aliases": [
+          "далекий срок"
+        ],
+        "keywords": [
+          "далек",
+          "не скоро",
+          "через долго"
+        ],
+        "phrases": [
+          "в далеком будущем",
+          "не скоро ли это"
+        ],
+        "enabled": true,
+        "answer_file": "answers/timing/far_future.json"
+      },
+      {
+        "id": "unclear_time",
+        "aliases": [
+          "неясный срок"
+        ],
+        "keywords": [
+          "неясно",
+          "не видно срок",
+          "размыт"
+        ],
+        "phrases": [
+          "когда не видно срок",
+          "срок не понятен"
+        ],
+        "enabled": true,
+        "answer_file": "answers/timing/unclear_time.json"
+      },
+      {
+        "id": "delayed",
+        "aliases": [
+          "задержка"
+        ],
+        "keywords": [
+          "задерж",
+          "тормоз",
+          "отлож"
+        ],
+        "phrases": [
+          "почему задержка",
+          "что тормозит срок"
+        ],
+        "enabled": true,
+        "answer_file": "answers/timing/delayed.json"
+      }
+    ],
+    "future": [
+      {
+        "id": "near_future",
+        "aliases": [
+          "ближайшее будущее"
+        ],
+        "keywords": [
+          "ближайш",
+          "скоро",
+          "в будущем"
+        ],
+        "phrases": [
+          "что ждет в ближайшем будущем"
+        ],
+        "enabled": true,
+        "answer_file": "answers/future/near_future.json"
+      },
+      {
+        "id": "event_outcome",
+        "aliases": [
+          "исход события"
+        ],
+        "keywords": [
+          "чем законч",
+          "исход",
+          "результат"
+        ],
+        "phrases": [
+          "чем закончится ситуация"
+        ],
+        "enabled": true,
+        "answer_file": "answers/future/event_outcome.json"
+      },
+      {
+        "id": "path_opening",
+        "aliases": [
+          "открытие пути"
+        ],
+        "keywords": [
+          "откроет",
+          "возможност",
+          "путь"
+        ],
+        "phrases": [
+          "откроется ли путь"
+        ],
+        "enabled": true,
+        "answer_file": "answers/future/path_opening.json"
+      },
+      {
+        "id": "change_coming",
+        "aliases": [
+          "грядущие перемены"
+        ],
+        "keywords": [
+          "перемен",
+          "перелом",
+          "измен"
+        ],
+        "phrases": [
+          "будут ли перемены",
+          "грядет ли перелом"
+        ],
+        "enabled": true,
+        "answer_file": "answers/future/change_coming.json"
+      }
+    ],
+    "career": [
+      {
+        "id": "job_change",
+        "aliases": [
+          "смена работы"
+        ],
+        "keywords": [
+          "смен",
+          "работ",
+          "новая работа"
+        ],
+        "phrases": [
+          "стоит ли менять работу"
+        ],
+        "enabled": true,
+        "answer_file": "answers/career/job_change.json"
+      },
+      {
+        "id": "promotion",
+        "aliases": [
+          "повышение"
+        ],
+        "keywords": [
+          "повышен",
+          "должност",
+          "карьерный рост"
+        ],
+        "phrases": [
+          "будет ли повышение"
+        ],
+        "enabled": true,
+        "answer_file": "answers/career/promotion.json"
+      },
+      {
+        "id": "success",
+        "aliases": [
+          "успех в деле"
+        ],
+        "keywords": [
+          "успех",
+          "получитс",
+          "удастс"
+        ],
+        "phrases": [
+          "будет ли успех в делах"
+        ],
+        "enabled": true,
+        "answer_file": "answers/career/success.json"
+      },
+      {
+        "id": "study",
+        "aliases": [
+          "учеба",
+          "экзамен"
+        ],
+        "keywords": [
+          "учеб",
+          "экзамен",
+          "поступлен"
+        ],
+        "phrases": [
+          "получится ли с учебой"
+        ],
+        "enabled": true,
+        "answer_file": "answers/career/study.json"
+      },
+      {
+        "id": "project",
+        "aliases": [
+          "проект"
+        ],
+        "keywords": [
+          "проект",
+          "запуск",
+          "перспектив"
+        ],
+        "phrases": [
+          "будет ли успешен проект"
+        ],
+        "enabled": true,
+        "answer_file": "answers/career/project.json"
+      },
+      {
+        "id": "boss_relation",
+        "aliases": [
+          "начальство"
+        ],
+        "keywords": [
+          "начальн",
+          "руковод",
+          "босс"
+        ],
+        "phrases": [
+          "как начальство ко мне относится"
+        ],
+        "enabled": true,
+        "answer_file": "answers/career/boss_relation.json"
+      }
+    ],
+    "money": [
+      {
+        "id": "income",
+        "aliases": [
+          "доход"
+        ],
+        "keywords": [
+          "доход",
+          "зарплат",
+          "деньг",
+          "прибыл"
+        ],
+        "phrases": [
+          "увеличится ли доход",
+          "будут ли деньги"
+        ],
+        "enabled": true,
+        "answer_file": "answers/money/income.json"
+      },
+      {
+        "id": "loss",
+        "aliases": [
+          "потери"
+        ],
+        "keywords": [
+          "потер",
+          "уйдут",
+          "утечк"
+        ],
+        "phrases": [
+          "будут ли потери",
+          "не уйдут ли деньги"
+        ],
+        "enabled": true,
+        "answer_file": "answers/money/loss.json"
+      },
+      {
+        "id": "debt",
+        "aliases": [
+          "долги",
+          "кредит"
+        ],
+        "keywords": [
+          "долг",
+          "кредит",
+          "расплат",
+          "вернут"
+        ],
+        "phrases": [
+          "когда отдам долг",
+          "стоит ли брать кредит"
+        ],
+        "enabled": true,
+        "answer_file": "answers/money/debt.json"
+      },
+      {
+        "id": "purchase",
+        "aliases": [
+          "покупка"
+        ],
+        "keywords": [
+          "покуп",
+          "вещ",
+          "сделк"
+        ],
+        "phrases": [
+          "стоит ли покупать",
+          "удачная ли покупка"
+        ],
+        "enabled": true,
+        "answer_file": "answers/money/purchase.json"
+      },
+      {
+        "id": "stability",
+        "aliases": [
+          "стабильность"
+        ],
+        "keywords": [
+          "стабил",
+          "финансов",
+          "устойчив"
+        ],
+        "phrases": [
+          "будет ли стабильный доход"
+        ],
+        "enabled": true,
+        "answer_file": "answers/money/stability.json"
+      }
+    ],
+    "self": [
+      {
+        "id": "personal_path",
+        "aliases": [
+          "мой путь"
+        ],
+        "keywords": [
+          "путь",
+          "мой",
+          "правильн"
+        ],
+        "phrases": [
+          "правильно ли я иду"
+        ],
+        "enabled": true,
+        "answer_file": "answers/self/personal_path.json"
+      },
+      {
+        "id": "inner_change",
+        "aliases": [
+          "внутренние изменения"
+        ],
+        "keywords": [
+          "измен",
+          "внутрен",
+          "состояни"
+        ],
+        "phrases": [
+          "смогу ли измениться"
+        ],
+        "enabled": true,
+        "answer_file": "answers/self/inner_change.json"
+      },
+      {
+        "id": "strength",
+        "aliases": [
+          "силы"
+        ],
+        "keywords": [
+          "сил",
+          "выдерж",
+          "ресурс"
+        ],
+        "phrases": [
+          "хватит ли сил"
+        ],
+        "enabled": true,
+        "answer_file": "answers/self/strength.json"
+      },
+      {
+        "id": "fear",
+        "aliases": [
+          "страх"
+        ],
+        "keywords": [
+          "страх",
+          "тревог",
+          "боюс"
+        ],
+        "phrases": [
+          "смогу ли преодолеть страх"
+        ],
+        "enabled": true,
+        "answer_file": "answers/self/fear.json"
+      },
+      {
+        "id": "decision",
+        "aliases": [
+          "личное решение"
+        ],
+        "keywords": [
+          "решени",
+          "ошиб",
+          "сомнен"
+        ],
+        "phrases": [
+          "верное ли мое решение"
+        ],
+        "enabled": true,
+        "answer_file": "answers/self/decision.json"
+      }
+    ],
+    "warning": [
+      {
+        "id": "danger",
+        "aliases": [
+          "опасность"
+        ],
+        "keywords": [
+          "опас",
+          "угроз",
+          "риск"
+        ],
+        "phrases": [
+          "есть ли опасность",
+          "что мне угрожает"
+        ],
+        "enabled": true,
+        "answer_file": "answers/warning/danger.json"
+      },
+      {
+        "id": "betrayal",
+        "aliases": [
+          "предательство"
+        ],
+        "keywords": [
+          "предат",
+          "измен",
+          "подстав"
+        ],
+        "phrases": [
+          "будет ли предательство"
+        ],
+        "enabled": true,
+        "answer_file": "answers/warning/betrayal.json"
+      },
+      {
+        "id": "illusion",
+        "aliases": [
+          "иллюзии",
+          "самообман"
+        ],
+        "keywords": [
+          "иллюз",
+          "обман",
+          "самообман"
+        ],
+        "phrases": [
+          "не обманываюсь ли я"
+        ],
+        "enabled": true,
+        "answer_file": "answers/warning/illusion.json"
+      },
+      {
+        "id": "obstacle",
+        "aliases": [
+          "препятствия"
+        ],
+        "keywords": [
+          "препятств",
+          "меша",
+          "блок"
+        ],
+        "phrases": [
+          "что мешает",
+          "какое препятствие"
+        ],
+        "enabled": true,
+        "answer_file": "answers/warning/obstacle.json"
+      },
+      {
+        "id": "delay",
+        "aliases": [
+          "застой",
+          "задержка"
+        ],
+        "keywords": [
+          "задерж",
+          "застыл",
+          "тормоз"
+        ],
+        "phrases": [
+          "почему все застыло",
+          "что тормозит"
+        ],
+        "enabled": true,
+        "answer_file": "answers/warning/delay.json"
+      }
+    ],
+    "general": [
+      {
+        "id": "yes_no",
+        "aliases": [
+          "общее да/нет"
+        ],
+        "keywords": [
+          "ли",
+          "да",
+          "нет"
+        ],
+        "phrases": [
+          "будет ли",
+          "стоит ли"
+        ],
+        "enabled": true,
+        "answer_file": "answers/general/yes_no.json"
+      },
+      {
+        "id": "open_question",
+        "aliases": [
+          "открытый вопрос"
+        ],
+        "keywords": [
+          "как",
+          "что",
+          "почему"
+        ],
+        "phrases": [
+          "что меня ждет",
+          "как будет лучше"
+        ],
+        "enabled": true,
+        "answer_file": "answers/general/open_question.json"
+      },
+      {
+        "id": "unclear_question",
+        "aliases": [
+          "неясный вопрос"
+        ],
+        "keywords": [
+          "непонятно",
+          "сбивчиво",
+          "обрыв"
+        ],
+        "phrases": [
+          "..."
+        ],
+        "enabled": true,
+        "answer_file": "answers/general/unclear_question.json"
+      }
+    ]
+  },
+  "legacy_aliases": {
+    "inner_state": "self",
+    "danger": "warning",
+    "time": "timing",
+    "path": "future"
+  }
+}

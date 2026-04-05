@@ -80,6 +80,10 @@ static esp_err_t mode_redirect_handler(httpd_req_t *req)
 
 static bool page_allowed_for_mode(page_mode_t page_mode, orb_mode_t mode)
 {
+    /* During early boot mode can be NONE; allow portal page open to avoid redirect loops. */
+    if (mode == ORB_MODE_NONE) {
+        return true;
+    }
     if (page_mode == PAGE_MODE_ANY) {
         return true;
     }

@@ -1,0 +1,635 @@
+
+Я специально делаю её не слишком академической, а такой, чтобы:
+- было удобно писать руками,
+- было удобно подтягивать под код,
+- можно было потом добавить словари и распознавание фраз,
+- не было мусорных категорий.
+
+Главная идея
+
+У тебя должны быть не просто категории фраз, а слои диалога:
+
+1. системные фразы
+2. служебные голосовые фразы
+3. мостики
+4. ядра ответов
+5. необязательные завершения
+6. словари интентов и подтипов
+
+То есть основа — это не greeting/understanding/prediction/farewell, а:
+
+- activation
+- service
+- bridge
+- answers
+- closure
+- dictionaries
+
+Предлагаемая структура папок
+
+texts/
+  activation/
+    listen.json
+    reprompt.json
+    idle_prompt.json
+
+  service/
+    errors.json
+    busy.json
+    fallback.json
+    joke.json
+    insult_replies.json
+    system_status.json
+
+  bridge/
+    neutral.json
+    warm.json
+    dark.json
+    uncertain.json
+    timing.json
+
+  closure/
+    neutral.json
+    soft.json
+    warning.json
+
+  answers/
+    love/
+      new_person.json
+      mutual_feelings.json
+      reunion.json
+      contact.json
+      relationship_future.json
+      marriage.json
+      rival.json
+
+    person/
+      intentions.json
+      hidden_thoughts.json
+      truthfulness.json
+      loyalty.json
+      return.json
+      contact.json
+
+    choice/
+      should_do.json
+      should_wait.json
+      option_compare.json
+      risk_choice.json
+      leave_or_stay.json
+
+    timing/
+      soon.json
+      later.json
+      far_future.json
+      unclear_time.json
+      delayed.json
+
+    future/
+      near_future.json
+      event_outcome.json
+      path_opening.json
+      change_coming.json
+
+    career/
+      job_change.json
+      promotion.json
+      success.json
+      study.json
+      project.json
+      boss_relation.json
+
+    money/
+      income.json
+      loss.json
+      debt.json
+      purchase.json
+      stability.json
+
+    self/
+      personal_path.json
+      inner_change.json
+      strength.json
+      fear.json
+      decision.json
+
+    warning/
+      danger.json
+      betrayal.json
+      illusion.json
+      obstacle.json
+      delay.json
+
+    general/
+      yes_no.json
+      open_question.json
+      unclear_question.json
+
+  dictionaries/
+    intents.json
+    subintents.json
+    question_forms.json
+    polarity_markers.json
+    tone_tags.json
+    answer_types.json
+
+Что лежит в каждой папке
+
+1. activation/
+Это фразы до ответа, когда человек только начинает взаимодействие.
+
+listen.json
+Короткие фразы типа:
+- я слушаю
+- говори
+- задай вопрос
+- вопрос принят
+- я слышу тебя
+
+reprompt.json
+Если человек молчит, сбился или фраза не распознана:
+- повтори вопрос яснее
+- скажи иначе
+- я уловил не всё
+- сформулируй короче
+
+idle_prompt.json
+Когда сфера ждёт:
+- я молчу, но слышу
+- знак спит до вопроса
+- скажи, что тревожит тебя
+
+Важно:
+сюда же можно было бы убрать все “прикоснись к сфере”, но раз ты хочешь их вообще убрать — значит просто не делаем.
+
+2. service/
+Это не предсказания, а служебные реплики.
+
+errors.json
+- связь с дальним голосом прервалась
+- ответ не собрался, попробуй ещё раз
+- знак распался, повтори вопрос
+
+busy.json
+- я уже занят другим голосом
+- подожди, текущий ответ ещё звучит
+- сейчас я говорю, задай вопрос позже
+
+fallback.json
+Для offline/local fallback:
+- сейчас отвечу без дальнего шёпота
+- этот знак придёт из ближайшего круга
+- отвечу тем, что вижу сейчас
+
+joke.json
+Если пользователь просит шутку/анекдот
+
+insult_replies.json
+Если обзывают сферу
+
+system_status.json
+Если нужны фразы про:
+- слушаю
+- думаю
+- ответ собирается
+- поток открыт
+- связь восстановлена
+
+3. bridge/
+Это короткая фраза между вопросом и ответом.
+Её нельзя делать слишком длинной.
+
+neutral.json
+- ответ проявляется
+- знак собирается
+- я вижу движение линии
+
+warm.json
+- в этом вопросе есть живое тепло
+- ответ идёт мягко, но ясно
+- здесь чувствуется не пустота
+
+dark.json
+- над этим вопросом лежит тень
+- здесь знак идёт тяжело
+- в этом пути есть скрытая трещина
+
+uncertain.json
+- картина колеблется
+- ответ ещё не закрепился
+- здесь знак не сразу становится ясным
+
+timing.json
+- время в этом вопросе важнее желания
+- срок ещё влияет на исход
+- здесь ответ связан не только с выбором, но и с моментом
+
+4. closure/
+Необязательные короткие хвосты.
+
+neutral.json
+- запомни этот знак
+- картина уже сказана
+- дальше слушай тишину
+
+soft.json
+- не торопи то, что ещё созревает
+- иногда мягкий шаг вернее резкого
+- позволь знаку раскрыться самому
+
+warning.json
+- не игнорируй этот намёк
+- здесь спешка опаснее ожидания
+- будь внимателен к мелочам
+
+Важно:
+closure не должен вставляться всегда. Лучше редко.
+
+Главное: answers/
+
+Вот тут твоя основная работа.
+Именно сюда надо вложить больше всего сил.
+
+Общий принцип для файлов в answers/
+
+Каждый файл должен быть разбит не на просто список фраз, а по типам ответа:
+
+{
+  "clear_yes": [],
+  "lean_yes": [],
+  "clear_no": [],
+  "lean_no": [],
+  "uncertain": [],
+  "timing_soon": [],
+  "timing_later": [],
+  "guidance_act": [],
+  "guidance_wait": [],
+  "warning": []
+}
+
+Не все блоки обязательны в каждом файле, но логика должна быть такой.
+
+Разделы ответов
+
+answers/love/
+
+new_person.json
+Вопросы типа:
+- встречу ли я кого-то
+- появится ли новая любовь
+- будет ли новый человек
+
+mutual_feelings.json
+- любит ли он/она
+- есть ли чувства
+- нравлюсь ли я
+
+reunion.json
+- вернётся ли бывший
+- будем ли снова вместе
+- возможно ли восстановление
+
+contact.json
+- напишет ли
+- позвонит ли
+- выйдет ли на связь
+
+relationship_future.json
+- будут ли отношения
+- к чему всё идёт
+- есть ли будущее у пары
+
+marriage.json
+- женюсь ли
+- выйду ли замуж
+- будет ли брак
+
+rival.json
+- есть ли кто-то ещё
+- есть ли соперница/соперник
+- вмешивается ли третий человек
+
+answers/person/
+
+intentions.json
+- какие у него намерения
+- чего он хочет
+- к чему он ведёт
+
+hidden_thoughts.json
+- думает ли он обо мне
+- что скрывает
+- что у него в голове
+
+truthfulness.json
+- врёт ли он
+- можно ли верить
+- честен ли человек
+
+loyalty.json
+- верен ли
+- надёжен ли
+- не предаст ли
+
+return.json
+- вернётся ли человек вообще
+- придёт ли обратно в жизнь
+
+contact.json
+- сам ли проявится
+- напишет ли первым
+
+answers/choice/
+
+should_do.json
+- стоит ли делать
+- стоит ли писать
+- стоит ли начинать
+
+should_wait.json
+- лучше ли подождать
+- не рано ли
+- выждать или действовать
+
+option_compare.json
+- вариант А или вариант Б
+- что выбрать
+- какой путь лучше
+
+risk_choice.json
+- рискнуть ли
+- стоит ли ввязываться
+- опасен ли выбор
+
+leave_or_stay.json
+- уйти или остаться
+- держаться или отпустить
+- сохранить или завершить
+
+answers/timing/
+
+soon.json
+- скоро ли
+- в ближайшее время ли
+- в течение короткого периода ли
+
+later.json
+- позже ли
+- не сейчас, а потом ли
+
+far_future.json
+- в далёком будущем
+- не скоро
+
+unclear_time.json
+- пока срок не виден
+- время не сформировалось
+
+delayed.json
+- будет, но позже из-за задержки
+- путь есть, но тормозится
+
+answers/future/
+
+near_future.json
+- что ждёт в ближайшем будущем
+
+event_outcome.json
+- чем закончится ситуация
+- что будет с этим делом
+
+path_opening.json
+- откроется ли путь
+- появится ли возможность
+
+change_coming.json
+- грядут ли перемены
+- будет ли перелом
+
+answers/career/
+
+job_change.json
+- менять ли работу
+- будет ли новая работа
+
+promotion.json
+- будет ли повышение
+- вырасту ли в должности
+
+success.json
+- получится ли дело
+- будет ли успех
+
+study.json
+- поступление
+- экзамен
+- учёба
+
+project.json
+- проект выстрелит или нет
+- есть ли перспектива
+
+boss_relation.json
+- отношения с начальством
+- как смотрит руководитель
+
+answers/money/
+
+income.json
+- будут ли деньги
+- вырастет ли доход
+
+loss.json
+- будут ли потери
+- не уйдут ли деньги
+
+debt.json
+- отдам ли долг
+- решится ли кредитная проблема
+
+purchase.json
+- стоит ли покупать
+- удачная ли покупка
+
+stability.json
+- будет ли финансовая стабильность
+
+answers/self/
+
+personal_path.json
+- правильно ли я иду
+- мой ли это путь
+
+inner_change.json
+- изменюсь ли
+- смогу ли выйти из состояния
+
+strength.json
+- хватит ли сил
+- выдержу ли
+
+fear.json
+- мешает ли страх
+- преодолею ли тревогу
+
+decision.json
+- верное ли моё решение
+- не ошибаюсь ли я
+
+answers/warning/
+
+danger.json
+- есть ли опасность
+- стоит ли опасаться
+
+betrayal.json
+- будет ли предательство
+- есть ли обман рядом
+
+illusion.json
+- не обманываюсь ли
+- не строю ли иллюзию
+
+obstacle.json
+- есть ли препятствие
+- что мешает
+
+delay.json
+- что тормозит
+- почему всё застыло
+
+answers/general/
+
+yes_no.json
+Для очень общих да/нет вопросов
+
+open_question.json
+Для открытых, широких вопросов
+
+unclear_question.json
+Когда вопрос понят слабо, но нужно ответить атмосферно
+
+dictionaries/
+
+Это база для распознавания смысла вопроса.
+
+intents.json
+Верхний уровень:
+- love
+- person
+- choice
+- timing
+- future
+- career
+- money
+- self
+- warning
+- general
+
+subintents.json
+Подтипы внутри каждого intent.
+
+question_forms.json
+Формы вопроса:
+- yes_no
+- when
+- who
+- should_i
+- compare
+- open
+
+polarity_markers.json
+Слова и конструкции, которые потом помогут тебе оценивать тип ответа или направление.
+
+tone_tags.json
+Теги тона для фраз:
+- soft
+- calm
+- warm
+- dark
+- direct
+- ominous
+
+answer_types.json
+Набор допустимых типов ответа:
+- clear_yes
+- lean_yes
+- clear_no
+- lean_no
+- uncertain
+- timing_soon
+- timing_later
+- guidance_act
+- guidance_wait
+- warning
+
+В каком порядке тебе этим заниматься
+
+Вот так будет правильно.
+
+Этап 1 — каркас
+Сначала создай только структуру и пустые файлы.
+
+Этап 2 — минимальная база
+Наполни:
+- activation/listen.json
+- service/errors.json
+- bridge/neutral.json
+- closure/neutral.json
+
+Тут много не нужно.
+
+Этап 3 — ядро ответов
+Сначала заполни самые частые категории:
+
+1. answers/love/contact.json
+2. answers/love/mutual_feelings.json
+3. answers/love/reunion.json
+4. answers/choice/should_do.json
+5. answers/choice/should_wait.json
+6. answers/timing/soon.json
+7. answers/timing/later.json
+8. answers/person/intentions.json
+
+Вот это даст максимальный эффект быстро.
+
+Этап 4 — словари
+Потом уже:
+- intents.json
+- subintents.json
+- question_forms.json
+
+Этап 5 — второстепенные категории
+После этого:
+- career
+- money
+- self
+- warning
+- future
+
+Самое важное правило для самих текстов
+
+Для каждого ответного файла сначала пиши смысловые ядра, а не украшения.
+
+То есть порядок такой:
+
+1. clear_yes
+2. clear_no
+3. uncertain
+4. timing
+5. guidance
+6. warning
+
+А уже потом добавляй красивости.
+
+Если совсем коротко
+
+Тебе сейчас нужна такая модель:
+
+- мало приветствий
+- мало прощаний
+- немного bridge-фраз
+- много сильных answer_core
+- словари интентов и подтипов отдельно
+
+Это и будет правильная база.

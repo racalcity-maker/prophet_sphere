@@ -42,6 +42,10 @@ typedef struct {
     uint32_t tts_chunks_dropped;
     uint32_t tts_bytes_rx;
     uint32_t tts_frames_rx;
+    uint32_t tts_boundary_jump_count;
+    uint32_t tts_boundary_jump_max;
+    bool tts_prev_sample_valid;
+    int16_t tts_prev_sample;
     TickType_t tts_started_tick;
     TickType_t tts_last_diag_tick;
     uint16_t tts_pcm_tail_count;

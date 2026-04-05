@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import json
 import random
 import re
 from dataclasses import dataclass, field
@@ -61,6 +62,17 @@ _POLARITY_NEG_STEMS = (
     "расстав",
 )
 
+_DOMAIN_ALIASES = {
+    "time": "timing",
+    "timing": "timing",
+    "path": "future",
+    "past": "future",
+    "luck": "future",
+    "yes_no": "future",
+    "warning": "danger",
+    "self": "inner_state",
+}
+
 
 def _norm_token(value: str) -> str:
     return value.strip().lower().replace("-", "_").replace(" ", "_")
@@ -69,6 +81,17 @@ def _norm_token(value: str) -> str:
 def _join_phrase(parts: List[str]) -> str:
     text = " ".join(part.strip() for part in parts if part.strip())
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _extend_unique(dst: List[str], src: Iterable[str]) -> None:
+    seen = set(dst)
+    for item in src:
+        if not item:
+            continue
+        if item in seen:
+            continue
+        dst.append(item)
+        seen.add(item)
 
 
 def _normalize_section_boundaries(raw: str) -> str:
@@ -109,6 +132,37 @@ def _count_stem_hits(tokens: List[str], stems: Tuple[str, ...]) -> int:
     return total
 
 
+def _phrase_similarity_ratio(a: str, b: str) -> float:
+    toks_a = set(_tokenize_norm(a))
+    toks_b = set(_tokenize_norm(b))
+    if not toks_a or not toks_b:
+        return 0.0
+    inter = len(toks_a & toks_b)
+    if inter <= 0:
+        return 0.0
+    union = len(toks_a | toks_b)
+    if union <= 0:
+        return 0.0
+    return inter / union
+
+
+def _phrases_redundant(a: str, b: str) -> bool:
+    ta = _tokenize_norm(a)
+    tb = _tokenize_norm(b)
+    if not ta or not tb:
+        return False
+    set_a = set(ta)
+    set_b = set(tb)
+    inter = len(set_a & set_b)
+    if inter <= 0:
+        return False
+    cov_a = inter / len(set_a)
+    cov_b = inter / len(set_b)
+    if cov_a >= 0.8 or cov_b >= 0.8:
+        return True
+    return _phrase_similarity_ratio(a, b) >= 0.62
+
+
 @dataclass
 class DomainTextSet:
     greeting: List[str] = field(default_factory=list)
@@ -120,9 +174,19 @@ class DomainTextSet:
 
 
 @dataclass
+class SubintentRule:
+    id: str
+    aliases: List[str] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
+    phrases: List[str] = field(default_factory=list)
+    enabled: bool = True
+
+
+@dataclass
 class ScriptSelection:
     text: str
     domain: str
+    subintent: str
     question_form: str
     prediction_bucket: str
     phases: Dict[str, str]
@@ -155,10 +219,14 @@ class OracleTextBank:
         *,
         domains: Dict[str, DomainTextSet],
         services: Dict[str, List[str]],
+        subintent_rules: Optional[Dict[str, List[SubintentRule]]] = None,
+        subintent_sets: Optional[Dict[str, Dict[str, DomainTextSet]]] = None,
         seed: Optional[int] = None,
     ) -> None:
         self.domains = domains
         self.services = services
+        self.subintent_rules = subintent_rules or {}
+        self.subintent_sets = subintent_sets or {}
         self._picker = _CyclePicker(seed)
 
     @staticmethod
@@ -181,6 +249,22 @@ class OracleTextBank:
             if len(out) >= len(source):
                 break
         return out
+
+    def _pick_distinct_phrase(
+        self,
+        *,
+        key: str,
+        values: Iterable[str],
+        avoid_phrase: str,
+        fallback: str = "",
+    ) -> str:
+        source = [v for v in values if v]
+        if not source:
+            return fallback
+        for candidate in self._pick_many(f"{key}:distinct", source, len(source)):
+            if not _phrases_redundant(avoid_phrase, candidate):
+                return candidate
+        return fallback
 
     @staticmethod
     def detect_question_form(text: str, *, yes_no_score: float = 0.0, yes_no_hits: int = 0) -> str:
@@ -238,7 +322,100 @@ class OracleTextBank:
         return "neutral", 0.0, {"positive": pos, "negative": neg, "delta": delta}
 
     @classmethod
-    def load_from_dir(cls, root: Path, *, seed: Optional[int] = None) -> "OracleTextBank":
+    def load_from_dir(
+        cls,
+        root: Path,
+        *,
+        seed: Optional[int] = None,
+        format_mode: str = "auto",
+        legacy_compat: bool = False,
+    ) -> "OracleTextBank":
+        mode = _norm_token(format_mode)
+        if mode not in ("auto", "legacy", "v2"):
+            mode = "auto"
+
+        if mode == "legacy":
+            return cls._load_legacy_dir(root, seed=seed)
+
+        if mode == "v2":
+            bank = cls._load_structured_dir(root, seed=seed)
+            if legacy_compat:
+                legacy = cls._load_legacy_dir(root, seed=seed)
+                bank._merge_inplace(legacy)
+            return bank
+
+        # auto
+        if cls._has_v2_layout(root):
+            bank = cls._load_structured_dir(root, seed=seed)
+            if legacy_compat:
+                legacy = cls._load_legacy_dir(root, seed=seed)
+                bank._merge_inplace(legacy)
+            return bank
+        return cls._load_legacy_dir(root, seed=seed)
+
+    @staticmethod
+    def _clone_domain_set(src: DomainTextSet) -> DomainTextSet:
+        return DomainTextSet(
+            greeting=list(src.greeting),
+            understanding=list(src.understanding),
+            prediction_positive=list(src.prediction_positive),
+            prediction_negative=list(src.prediction_negative),
+            prediction_neutral=list(src.prediction_neutral),
+            farewell=list(src.farewell),
+        )
+
+    @staticmethod
+    def _clone_subintent_rule(src: SubintentRule) -> SubintentRule:
+        return SubintentRule(
+            id=src.id,
+            aliases=list(src.aliases),
+            keywords=list(src.keywords),
+            phrases=list(src.phrases),
+            enabled=bool(src.enabled),
+        )
+
+    def _merge_inplace(self, other: "OracleTextBank") -> None:
+        for name, incoming in other.domains.items():
+            current = self.domains.get(name)
+            if current is None:
+                self.domains[name] = self._clone_domain_set(incoming)
+                continue
+            _extend_unique(current.greeting, incoming.greeting)
+            _extend_unique(current.understanding, incoming.understanding)
+            _extend_unique(current.prediction_positive, incoming.prediction_positive)
+            _extend_unique(current.prediction_negative, incoming.prediction_negative)
+            _extend_unique(current.prediction_neutral, incoming.prediction_neutral)
+            _extend_unique(current.farewell, incoming.farewell)
+
+        for section, incoming_items in other.services.items():
+            bucket = self.services.setdefault(section, [])
+            _extend_unique(bucket, incoming_items)
+
+        for domain, incoming_rules in other.subintent_rules.items():
+            bucket = self.subintent_rules.setdefault(domain, [])
+            existing_ids = {r.id for r in bucket}
+            for rule in incoming_rules:
+                if rule.id in existing_ids:
+                    continue
+                bucket.append(self._clone_subintent_rule(rule))
+                existing_ids.add(rule.id)
+
+        for domain, incoming_sets in other.subintent_sets.items():
+            target_sets = self.subintent_sets.setdefault(domain, {})
+            for sub_id, incoming_set in incoming_sets.items():
+                current = target_sets.get(sub_id)
+                if current is None:
+                    target_sets[sub_id] = self._clone_domain_set(incoming_set)
+                    continue
+                _extend_unique(current.greeting, incoming_set.greeting)
+                _extend_unique(current.understanding, incoming_set.understanding)
+                _extend_unique(current.prediction_positive, incoming_set.prediction_positive)
+                _extend_unique(current.prediction_negative, incoming_set.prediction_negative)
+                _extend_unique(current.prediction_neutral, incoming_set.prediction_neutral)
+                _extend_unique(current.farewell, incoming_set.farewell)
+
+    @classmethod
+    def _load_legacy_dir(cls, root: Path, *, seed: Optional[int] = None) -> "OracleTextBank":
         domains: Dict[str, DomainTextSet] = {}
         services: Dict[str, List[str]] = {
             "intro": [],
@@ -246,6 +423,9 @@ class OracleTextBank:
             "fail": [],
             "joke": [],
             "forbidden": [],
+            "thinking": [],
+            "resolved": [],
+            "restored": [],
         }
         if not root.exists():
             return cls(domains=domains, services=services, seed=seed)
@@ -256,12 +436,237 @@ class OracleTextBank:
             if "service_audio_txt" in name:
                 parsed = cls._parse_service_text(raw)
                 for k, v in parsed.items():
-                    services[k].extend(v)
+                    _extend_unique(services[k], v)
             else:
                 parsed = cls._parse_domain_text(raw)
-                domains[name] = parsed
+                current = domains.get(name)
+                if current is None:
+                    domains[name] = parsed
+                else:
+                    _extend_unique(current.greeting, parsed.greeting)
+                    _extend_unique(current.understanding, parsed.understanding)
+                    _extend_unique(current.prediction_positive, parsed.prediction_positive)
+                    _extend_unique(current.prediction_negative, parsed.prediction_negative)
+                    _extend_unique(current.prediction_neutral, parsed.prediction_neutral)
+                    _extend_unique(current.farewell, parsed.farewell)
 
         return cls(domains=domains, services=services, seed=seed)
+
+    @staticmethod
+    def _has_v2_layout(root: Path) -> bool:
+        if not root.exists():
+            return False
+        for name in ("activation", "service", "bridge", "answers", "closure"):
+            if (root / name).is_dir():
+                return True
+        return False
+
+    @staticmethod
+    def _parse_json_phrases(payload: object) -> List[str]:
+        out: List[str] = []
+        if isinstance(payload, str):
+            phrase = _join_phrase([payload])
+            if phrase:
+                out.append(phrase)
+            return out
+        if isinstance(payload, list):
+            for item in payload:
+                out.extend(OracleTextBank._parse_json_phrases(item))
+            return out
+        if isinstance(payload, dict):
+            for value in payload.values():
+                out.extend(OracleTextBank._parse_json_phrases(value))
+            return out
+        return out
+
+    @classmethod
+    def _load_structured_dir(cls, root: Path, *, seed: Optional[int] = None) -> "OracleTextBank":
+        domains: Dict[str, DomainTextSet] = {}
+        services: Dict[str, List[str]] = {
+            "intro": [],
+            "retry": [],
+            "fail": [],
+            "joke": [],
+            "forbidden": [],
+            "thinking": [],
+            "resolved": [],
+            "restored": [],
+        }
+        subintent_rules: Dict[str, List[SubintentRule]] = {}
+        subintent_sets: Dict[str, Dict[str, DomainTextSet]] = {}
+        if not root.exists():
+            return cls(
+                domains=domains,
+                services=services,
+                subintent_rules=subintent_rules,
+                subintent_sets=subintent_sets,
+                seed=seed,
+            )
+
+        activation_dir = root / "activation"
+        service_dir = root / "service"
+        bridge_dir = root / "bridge"
+        closure_dir = root / "closure"
+        answers_dir = root / "answers"
+        dictionaries_dir = root / "dictionaries"
+
+        global_greeting: List[str] = []
+        global_understanding: List[str] = []
+        global_farewell: List[str] = []
+
+        def _load_json(path: Path) -> object:
+            if not path.exists():
+                return {}
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+
+        def _load_json_list(path: Path) -> List[str]:
+            return cls._parse_json_phrases(_load_json(path))
+
+        def _load_json_map(path: Path) -> Dict[str, List[str]]:
+            payload = _load_json(path)
+            out: Dict[str, List[str]] = {}
+            if not isinstance(payload, dict):
+                return out
+            for key, value in payload.items():
+                out[_norm_token(str(key))] = cls._parse_json_phrases(value)
+            return out
+
+        if activation_dir.exists():
+            _extend_unique(global_greeting, _load_json_list(activation_dir / "listen.json"))
+            _extend_unique(global_understanding, _load_json_list(activation_dir / "reprompt.json"))
+            _extend_unique(global_understanding, _load_json_list(activation_dir / "idle_prompt.json"))
+
+        if service_dir.exists():
+            _extend_unique(services["fail"], _load_json_list(service_dir / "errors.json"))
+            _extend_unique(services["fail"], _load_json_list(service_dir / "fallback.json"))
+            _extend_unique(services["retry"], _load_json_list(service_dir / "busy.json"))
+            status_sections = _load_json_map(service_dir / "system_status.json")
+            _extend_unique(services["intro"], status_sections.get("listening", []))
+            _extend_unique(services["thinking"], status_sections.get("thinking", []))
+            _extend_unique(services["resolved"], status_sections.get("resolved", []))
+            _extend_unique(services["restored"], status_sections.get("restored", []))
+            _extend_unique(services["joke"], _load_json_list(service_dir / "joke.json"))
+            _extend_unique(services["forbidden"], _load_json_list(service_dir / "insult_replies.json"))
+
+        if bridge_dir.exists():
+            for bridge_file in sorted(bridge_dir.glob("*.json")):
+                _extend_unique(global_understanding, _load_json_list(bridge_file))
+
+        if closure_dir.exists():
+            for closure_file in sorted(closure_dir.glob("*.json")):
+                _extend_unique(global_farewell, _load_json_list(closure_file))
+
+        if not services["intro"]:
+            _extend_unique(services["intro"], global_greeting)
+        if not services["retry"]:
+            _extend_unique(services["retry"], global_understanding)
+        if not services["fail"]:
+            _extend_unique(services["fail"], global_farewell)
+
+        answer_bucket_positive = {
+            "clear_yes",
+            "lean_yes",
+            "timing_soon",
+            "guidance_act",
+        }
+        answer_bucket_negative = {
+            "clear_no",
+            "lean_no",
+            "timing_later",
+            "guidance_wait",
+            "warning",
+        }
+
+        if answers_dir.exists():
+            for domain_dir in sorted([p for p in answers_dir.iterdir() if p.is_dir()]):
+                domain_name = _norm_token(domain_dir.name)
+                domain_name = _DOMAIN_ALIASES.get(domain_name, domain_name)
+                target = domains.setdefault(domain_name, DomainTextSet())
+                per_domain = subintent_sets.setdefault(domain_name, {})
+                for json_path in sorted(domain_dir.glob("*.json")):
+                    sub_id = _norm_token(json_path.stem)
+                    sub_target = per_domain.setdefault(sub_id, DomainTextSet())
+                    payload = _load_json(json_path)
+                    if isinstance(payload, dict):
+                        for key, value in payload.items():
+                            phrases = cls._parse_json_phrases(value)
+                            if not phrases:
+                                continue
+                            key_norm = _norm_token(str(key))
+                            if key_norm in answer_bucket_positive:
+                                _extend_unique(target.prediction_positive, phrases)
+                                _extend_unique(sub_target.prediction_positive, phrases)
+                            elif key_norm in answer_bucket_negative:
+                                _extend_unique(target.prediction_negative, phrases)
+                                _extend_unique(sub_target.prediction_negative, phrases)
+                            else:
+                                _extend_unique(target.prediction_neutral, phrases)
+                                _extend_unique(sub_target.prediction_neutral, phrases)
+                    else:
+                        phrases = cls._parse_json_phrases(payload)
+                        _extend_unique(target.prediction_neutral, phrases)
+                        _extend_unique(sub_target.prediction_neutral, phrases)
+
+        subintents_path = dictionaries_dir / "subintents.json"
+        if subintents_path.exists():
+            raw_sub = _load_json(subintents_path)
+            raw_map = raw_sub.get("subintents", {}) if isinstance(raw_sub, dict) else {}
+            if isinstance(raw_map, dict):
+                for domain_key, items in raw_map.items():
+                    domain_name = _norm_token(str(domain_key))
+                    domain_name = _DOMAIN_ALIASES.get(domain_name, domain_name)
+                    if not isinstance(items, list):
+                        continue
+                    domain_rules = subintent_rules.setdefault(domain_name, [])
+                    existing = {r.id for r in domain_rules}
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        sid = _norm_token(str(item.get("id", "")))
+                        if not sid or sid in existing:
+                            continue
+                        phrases = cls._parse_json_phrases(item.get("phrases", []))
+                        aliases = cls._parse_json_phrases(item.get("aliases", []))
+                        keywords = cls._parse_json_phrases(item.get("keywords", []))
+                        enabled = bool(item.get("enabled", True))
+                        domain_rules.append(
+                            SubintentRule(
+                                id=sid,
+                                aliases=aliases,
+                                keywords=keywords,
+                                phrases=phrases,
+                                enabled=enabled,
+                            )
+                        )
+                        existing.add(sid)
+
+        for domain in domains.values():
+            if not domain.greeting:
+                _extend_unique(domain.greeting, global_greeting)
+            if not domain.understanding:
+                _extend_unique(domain.understanding, global_understanding)
+            if not domain.farewell:
+                _extend_unique(domain.farewell, global_farewell)
+
+        for per_domain in subintent_sets.values():
+            for sub_domain in per_domain.values():
+                if not sub_domain.greeting:
+                    _extend_unique(sub_domain.greeting, global_greeting)
+                if not sub_domain.understanding:
+                    _extend_unique(sub_domain.understanding, global_understanding)
+                if not sub_domain.farewell:
+                    _extend_unique(sub_domain.farewell, global_farewell)
+
+        return cls(
+            domains=domains,
+            services=services,
+            subintent_rules=subintent_rules,
+            subintent_sets=subintent_sets,
+            seed=seed,
+        )
 
     @staticmethod
     def _parse_service_text(raw: str) -> Dict[str, List[str]]:
@@ -356,17 +761,9 @@ class OracleTextBank:
 
     def _resolve_domain(self, intent: str) -> Tuple[str, DomainTextSet]:
         key = _norm_token(intent)
-        aliases = {
-            "time": "timing",
-            "timing": "timing",
-            "path": "future",
-            "past": "future",
-            "luck": "future",
-            "yes_no": "future",
-        }
         candidates = [key]
-        if key in aliases:
-            candidates.append(aliases[key])
+        if key in _DOMAIN_ALIASES:
+            candidates.append(_DOMAIN_ALIASES[key])
         candidates.extend(["future", "love", "choice"])
 
         for name in candidates:
@@ -377,12 +774,94 @@ class OracleTextBank:
                 return name, data
         return "unknown", DomainTextSet()
 
+    def detect_subintent(self, text: str, *, intent: str) -> Tuple[str, float, Dict[str, object]]:
+        domain_name, _ = self._resolve_domain(intent)
+        rules = self.subintent_rules.get(domain_name, [])
+        if not text or not rules:
+            return "", 0.0, {"domain": domain_name, "reason": "no_rules_or_text", "scores": {}}
+
+        tokens = _tokenize_norm(text)
+        if not tokens:
+            return "", 0.0, {"domain": domain_name, "reason": "empty_tokens", "scores": {}}
+        text_norm = " ".join(tokens)
+        padded = f" {text_norm} "
+
+        scores: Dict[str, float] = {}
+        hits: Dict[str, List[str]] = {}
+        for rule in rules:
+            if not rule.enabled:
+                continue
+            sid = _norm_token(rule.id)
+            if not sid:
+                continue
+            score = 0.0
+            rhits: List[str] = []
+
+            for phrase in rule.phrases:
+                phrase_norm = " ".join(_tokenize_norm(phrase))
+                if not phrase_norm:
+                    continue
+                if f" {phrase_norm} " in padded:
+                    score += 14.0
+                    rhits.append(f"phrase:{phrase_norm}(+14)")
+
+            for alias in rule.aliases:
+                alias_norm = " ".join(_tokenize_norm(alias))
+                if not alias_norm:
+                    continue
+                if f" {alias_norm} " in padded:
+                    score += 9.0
+                    rhits.append(f"alias:{alias_norm}(+9)")
+
+            for kw in rule.keywords:
+                kw_tokens = _tokenize_norm(kw)
+                if not kw_tokens:
+                    continue
+                for kw_token in kw_tokens:
+                    count = sum(1 for t in tokens if t.startswith(kw_token))
+                    if count > 0:
+                        add = 4.0 * float(min(2, count))
+                        score += add
+                        rhits.append(f"kw:{kw_token}x{count}(+{add:g})")
+
+            if score > 0.0:
+                scores[sid] = score
+                hits[sid] = rhits
+
+        if not scores:
+            return "", 0.0, {"domain": domain_name, "reason": "no_signal", "scores": {}, "hits": {}}
+
+        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        best_id, best_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+        margin = best_score - second_score
+        if best_score < 4.0:
+            return "", 0.0, {
+                "domain": domain_name,
+                "reason": "low_score",
+                "scores": scores,
+                "hits": hits,
+                "margin": margin,
+            }
+
+        conf = min(0.99, max(0.05, (best_score / max(1.0, best_score + second_score)) + min(0.25, margin / 40.0)))
+        return best_id, conf, {
+            "domain": domain_name,
+            "scores": scores,
+            "hits": hits,
+            "margin": margin,
+            "top": [r[0] for r in ranked[:3]],
+        }
+
     def select_script(
         self,
         *,
         intent: str,
+        subintent: str = "",
         question_form: str = "open",
         force_polarity: str = "",
+        include_opening_phases: bool = False,
+        allow_thinking_phase: bool = True,
     ) -> ScriptSelection:
         normalized_intent = _norm_token(intent)
         if normalized_intent == "joke":
@@ -390,6 +869,7 @@ class OracleTextBank:
             return ScriptSelection(
                 text=text,
                 domain="service_joke",
+                subintent="",
                 question_form="open",
                 prediction_bucket="service",
                 phases={"joke": text},
@@ -399,6 +879,7 @@ class OracleTextBank:
             return ScriptSelection(
                 text=text,
                 domain="service_forbidden",
+                subintent="",
                 question_form="open",
                 prediction_bucket="service",
                 phases={"forbidden": text},
@@ -408,34 +889,55 @@ class OracleTextBank:
             return ScriptSelection(
                 text=text,
                 domain="service_fail",
+                subintent="",
                 question_form="open",
                 prediction_bucket="service",
                 phases={"fail": text},
             )
 
         domain_name, domain = self._resolve_domain(normalized_intent)
-        greeting = self._picker.pick(f"{domain_name}:greeting", domain.greeting) or self._pick_service("intro")
-        understanding = self._picker.pick(f"{domain_name}:understanding", domain.understanding) or self._pick_service("retry")
+        selected_subintent = _norm_token(subintent)
+        active_domain = domain
+        if selected_subintent:
+            by_domain = self.subintent_sets.get(domain_name, {})
+            candidate = by_domain.get(selected_subintent)
+            if candidate is not None:
+                active_domain = candidate
+            else:
+                selected_subintent = ""
+
+        greeting = ""
+        understanding = ""
+        if include_opening_phases:
+            greeting = self._picker.pick(f"{domain_name}:greeting", active_domain.greeting) or self._pick_service("intro")
+            understanding = self._picker.pick(f"{domain_name}:understanding", active_domain.understanding) or self._pick_service("retry")
+            if _phrases_redundant(greeting, understanding):
+                understanding = self._pick_distinct_phrase(
+                    key=f"{domain_name}:understanding",
+                    values=active_domain.understanding,
+                    avoid_phrase=greeting,
+                    fallback="",
+                )
 
         form = "yes_no" if _norm_token(question_form) == "yes_no" else "open"
         bucket = "neutral"
-        pred_pool = domain.prediction_neutral
+        pred_pool = active_domain.prediction_neutral
 
         if form == "yes_no":
             polarity = _norm_token(force_polarity)
             if polarity not in ("positive", "negative"):
                 polarity = "positive" if self._picker.choose_bool() else "negative"
-            if polarity == "positive" and domain.prediction_positive:
-                pred_pool = domain.prediction_positive
+            if polarity == "positive" and active_domain.prediction_positive:
+                pred_pool = active_domain.prediction_positive
                 bucket = "positive"
-            elif polarity == "negative" and domain.prediction_negative:
-                pred_pool = domain.prediction_negative
+            elif polarity == "negative" and active_domain.prediction_negative:
+                pred_pool = active_domain.prediction_negative
                 bucket = "negative"
-            elif domain.prediction_neutral:
-                pred_pool = domain.prediction_neutral
+            elif active_domain.prediction_neutral:
+                pred_pool = active_domain.prediction_neutral
                 bucket = "neutral"
-            elif domain.prediction_positive or domain.prediction_negative:
-                merged = list(domain.prediction_positive) + list(domain.prediction_negative)
+            elif active_domain.prediction_positive or active_domain.prediction_negative:
+                merged = list(active_domain.prediction_positive) + list(active_domain.prediction_negative)
                 pred_pool = merged
                 bucket = "mixed"
 
@@ -444,20 +946,39 @@ class OracleTextBank:
             prediction = self._pick_service("fail", fallback="Сейчас знаки молчат")
             bucket = "service_fallback"
 
-        farewell = self._picker.pick(f"{domain_name}:farewell", domain.farewell)
+        thinking = ""
+        if allow_thinking_phase:
+            think_pool = self.services.get("thinking", [])
+            if not think_pool:
+                think_pool = self.services.get("retry", [])
+            if think_pool and self._picker.choose_bool():
+                candidate = self._picker.pick(f"{domain_name}:thinking", think_pool)
+                if candidate and not _phrases_redundant(candidate, prediction):
+                    thinking = candidate
+
+        farewell = self._picker.pick(f"{domain_name}:farewell", active_domain.farewell)
         if not farewell:
             farewell = self._pick_service("fail", fallback="На сегодня всё")
+        if _phrases_redundant(prediction, farewell) or (thinking and _phrases_redundant(thinking, farewell)):
+            farewell = ""
 
         phases = {
             "greeting": greeting,
             "understanding": understanding,
+            "thinking": thinking,
             "prediction": prediction,
             "farewell": farewell,
         }
-        text = "\n".join([greeting, understanding, prediction, farewell]).strip()
+        ordered_parts = [prediction, farewell]
+        if thinking:
+            ordered_parts = [thinking, prediction, farewell]
+        if include_opening_phases:
+            ordered_parts = [greeting, understanding] + ordered_parts
+        text = "\n".join([part for part in ordered_parts if part]).strip()
         return ScriptSelection(
             text=text,
             domain=domain_name,
+            subintent=selected_subintent,
             question_form=form,
             prediction_bucket=bucket,
             phases=phases,

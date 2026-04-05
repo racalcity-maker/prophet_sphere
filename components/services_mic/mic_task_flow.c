@@ -45,6 +45,7 @@ static void play_tts_text(mic_capture_ctx_t *capture,
                           mic_loopback_ctx_t *loopback,
                           const char *text,
                           uint32_t stream_timeout_ms,
+                          uint32_t bg_fade_out_ms,
                           const mic_task_flow_ops_t *ops)
 {
     if (capture == NULL || loopback == NULL || text == NULL || text[0] == '\0' || ops == NULL ||
@@ -58,7 +59,7 @@ static void play_tts_text(mic_capture_ctx_t *capture,
         ops->stop_loopback(capture, loopback);
     }
 
-    mic_task_tts_pipeline_play(capture->capture_id, text, stream_timeout_ms);
+    mic_task_tts_pipeline_play(capture->capture_id, text, stream_timeout_ms, bg_fade_out_ms);
 }
 
 static void start_capture(mic_capture_ctx_t *capture,
@@ -176,7 +177,12 @@ void mic_task_flow_process_command(mic_capture_ctx_t *capture,
         ops->stop_loopback(capture, loopback);
         break;
     case MIC_CMD_TTS_PLAY_TEXT:
-        play_tts_text(capture, loopback, cmd->payload.tts_play.text, cmd->payload.tts_play.timeout_ms, ops);
+        play_tts_text(capture,
+                      loopback,
+                      cmd->payload.tts_play.text,
+                      cmd->payload.tts_play.timeout_ms,
+                      cmd->payload.tts_play.bg_fade_out_ms,
+                      ops);
         break;
     case MIC_CMD_NONE:
     default:

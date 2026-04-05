@@ -1,0 +1,13 @@
+{
+  "package": "oracle_texts_second_batch",
+  "style": "soft_mystic_with_grounded_meaning",
+  "files": [
+    "service/fallback.json",
+    "service/busy.json",
+    "service/system_status.json",
+    "answers/general/yes_no.json",
+    "answers/general/unclear_question.json",
+    "answers/warning/illusion.json",
+    "answers/warning/obstacle.json"
+  ]
+}

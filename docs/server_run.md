@@ -20,6 +20,8 @@ python kws/scripts/pi_mic_ws_server.py \
   --silero-device cpu \
   --silero-num-threads 1 \
   --oracle-texts-dir ~/orb_ws/docs/texts \
+  --oracle-texts-format auto \
+  --oracle-texts-legacy-compat \
   --tts-pacing realtime \
   --tts-tempo-scale 0.85 \
   --tts-phrase-pause-ms 1500 \
@@ -51,6 +53,8 @@ python kws/scripts/pi_mic_ws_server.py \
   --silero-speaker xenia \
   --silero-sample-rate 24000 \
   --oracle-texts-dir ~/orb_ws/docs/texts \
+  --oracle-texts-format auto \
+  --oracle-texts-legacy-compat \
   --tts-pacing realtime \
   --tts-tempo-scale 0.85 \
   --oracle-llm-backend local \
@@ -66,3 +70,14 @@ python kws/scripts/pi_mic_ws_server.py \
 ```bash
 ss -ltnp | grep 8765 || true
 ```
+
+## 4) Формат текстов (новый + совместимость)
+
+- `--oracle-texts-format auto`  
+  Сначала пытается загрузить новую структуру (`activation/`, `service/`, `bridge/`, `answers/`, `closure/`), иначе использует legacy `.txt`.
+- `--oracle-texts-format v2`  
+  Только новый формат.
+- `--oracle-texts-format legacy`  
+  Только старые `.txt`.
+- `--oracle-texts-legacy-compat`  
+  В режимах `auto`/`v2` дополнительно подмешивает legacy `.txt` как fallback.

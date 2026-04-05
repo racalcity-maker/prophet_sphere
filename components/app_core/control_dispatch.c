@@ -208,6 +208,7 @@ esp_err_t control_dispatch_queue_mic_tts_play_text(const char *text, uint32_t st
     mic_cmd.id = MIC_CMD_TTS_PLAY_TEXT;
     (void)snprintf(mic_cmd.payload.tts_play.text, sizeof(mic_cmd.payload.tts_play.text), "%s", text);
     mic_cmd.payload.tts_play.timeout_ms = stream_timeout_ms;
+    mic_cmd.payload.tts_play.bg_fade_out_ms = 0U;
     ESP_RETURN_ON_ERROR(app_tasking_send_mic_command(&mic_cmd, CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS),
                         TAG,
                         "failed to queue mic tts play");

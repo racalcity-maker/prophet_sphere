@@ -193,6 +193,16 @@ void audio_worker_bg_begin_fade(uint16_t target_gain_permille, uint32_t fade_ms,
     if (!s_bg.active) {
         return;
     }
+    if (target_gain_permille > 1000U) {
+        target_gain_permille = 1000U;
+    }
+    /*
+     * Even "instant" bg gain jumps can click on real DAC paths.
+     * Force a tiny ramp unless gain is unchanged.
+     */
+    if (fade_ms == 0U && target_gain_permille != s_bg.gain_permille) {
+        fade_ms = 16U;
+    }
     s_bg.fade_start_gain_permille = s_bg.gain_permille;
     s_bg.fade_target_gain_permille = target_gain_permille;
     s_bg.fade_total_samples = audio_worker_ms_to_samples(fade_ms);

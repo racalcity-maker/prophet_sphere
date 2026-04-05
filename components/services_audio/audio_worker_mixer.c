@@ -12,6 +12,30 @@
 
 static const char *TAG = LOG_TAG_AUDIO;
 static TickType_t s_tts_mix_diag_last_log_tick;
+static bool s_tts_out_prev_sample_valid;
+static int16_t s_tts_out_prev_sample;
+static uint32_t s_tts_out_boundary_jump_count;
+static uint32_t s_tts_out_boundary_jump_max;
+static bool s_fg_prev_sample_valid;
+static int16_t s_fg_prev_sample;
+static uint32_t s_fg_boundary_jump_count;
+static uint32_t s_fg_boundary_jump_max;
+static bool s_pcm_fg_signal_prev;
+static uint16_t s_pcm_fg_silence_run;
+static uint32_t s_click_probe_budget;
+static uint64_t s_click_probe_emitted_samples;
+
+#define AUDIO_OUT_DECLICK_THRESHOLD 2200U
+#define AUDIO_OUT_DECLICK_RAMP_SAMPLES 48U
+#define AUDIO_FG_DECLICK_THRESHOLD 900U
+#define AUDIO_FG_DECLICK_RAMP_SAMPLES 96U
+#define AUDIO_FG_ONSET_ON_THRESHOLD 600U
+#define AUDIO_FG_ONSET_OFF_THRESHOLD 240U
+#define AUDIO_FG_ONSET_SILENCE_SAMPLES 2205U
+#define AUDIO_CLICK_PROBE_BUDGET 6U
+#define AUDIO_CLICK_SPIKE_ABS 2200
+#define AUDIO_CLICK_NEIGHBOR_ABS 520
+#define AUDIO_CLICK_DELTA 2000
 
 static inline int16_t clamp_i16(int32_t value)
 {
@@ -67,6 +91,33 @@ uint16_t audio_worker_fg_attack_next_permille(void)
     return (uint16_t)gain;
 }
 
+void audio_worker_pcm_stream_diag_reset(void)
+{
+    s_tts_mix_diag_last_log_tick = 0;
+    s_tts_out_prev_sample_valid = true;
+    s_tts_out_prev_sample = 0;
+    s_tts_out_boundary_jump_count = 0U;
+    s_tts_out_boundary_jump_max = 0U;
+    s_fg_prev_sample_valid = true;
+    s_fg_prev_sample = 0;
+    s_fg_boundary_jump_count = 0U;
+    s_fg_boundary_jump_max = 0U;
+    s_pcm_fg_signal_prev = false;
+    s_pcm_fg_silence_run = AUDIO_FG_ONSET_SILENCE_SAMPLES;
+    s_click_probe_budget = AUDIO_CLICK_PROBE_BUDGET;
+    s_click_probe_emitted_samples = 0U;
+}
+
+void audio_worker_pcm_stream_diag_snapshot(uint32_t *out_jump_count, uint32_t *out_jump_max)
+{
+    if (out_jump_count != NULL) {
+        *out_jump_count = s_tts_out_boundary_jump_count;
+    }
+    if (out_jump_max != NULL) {
+        *out_jump_max = s_tts_out_boundary_jump_max;
+    }
+}
+
 static void pcm_short_stats(const int16_t *samples, size_t sample_count, int16_t *out_min, int16_t *out_max, uint32_t *out_abs_avg)
 {
     if (samples == NULL || sample_count == 0U || out_min == NULL || out_max == NULL || out_abs_avg == NULL) {
@@ -114,6 +165,154 @@ static uint16_t pcm_clip_permille(const int16_t *samples, size_t sample_count)
     return (uint16_t)((clips * 1000U) / n);
 }
 
+static uint16_t bg_gain_for_sample_offset(size_t sample_offset)
+{
+    if (!s_bg.fade_active || s_bg.fade_total_samples == 0U) {
+        return s_bg.gain_permille;
+    }
+
+    uint64_t pos = (uint64_t)s_bg.fade_done_samples + (uint64_t)sample_offset;
+    if (pos >= (uint64_t)s_bg.fade_total_samples) {
+        return s_bg.fade_target_gain_permille;
+    }
+
+    int32_t delta = (int32_t)s_bg.fade_target_gain_permille - (int32_t)s_bg.fade_start_gain_permille;
+    int64_t numer = (int64_t)delta * (int64_t)pos;
+    int32_t step = (int32_t)(numer / (int64_t)s_bg.fade_total_samples);
+    int32_t gain = (int32_t)s_bg.fade_start_gain_permille + step;
+    if (gain < 0) {
+        gain = 0;
+    } else if (gain > 1000) {
+        gain = 1000;
+    }
+    return (uint16_t)gain;
+}
+
+static void audio_worker_apply_output_declick(int16_t *samples, size_t sample_count)
+{
+    if (samples == NULL || sample_count == 0U) {
+        return;
+    }
+
+    int16_t first = samples[0];
+    int16_t last = samples[sample_count - 1U];
+    if (!s_tts_out_prev_sample_valid) {
+        s_tts_out_prev_sample = last;
+        s_tts_out_prev_sample_valid = true;
+        return;
+    }
+
+    int32_t jump = (int32_t)first - (int32_t)s_tts_out_prev_sample;
+    if (jump < 0) {
+        jump = -jump;
+    }
+    uint32_t abs_jump = (uint32_t)jump;
+    if (abs_jump > s_tts_out_boundary_jump_max) {
+        s_tts_out_boundary_jump_max = abs_jump;
+    }
+    if (abs_jump >= AUDIO_OUT_DECLICK_THRESHOLD) {
+        size_t ramp_n = sample_count;
+        if (ramp_n > AUDIO_OUT_DECLICK_RAMP_SAMPLES) {
+            ramp_n = AUDIO_OUT_DECLICK_RAMP_SAMPLES;
+        }
+        int32_t prev = (int32_t)s_tts_out_prev_sample;
+        for (size_t i = 0; i < ramp_n; ++i) {
+            int32_t target = (int32_t)samples[i];
+            int32_t mixed = prev + (int32_t)(((int64_t)(target - prev) * (int64_t)(i + 1U)) / (int64_t)ramp_n);
+            samples[i] = clamp_i16(mixed);
+        }
+        s_tts_out_boundary_jump_count++;
+        last = samples[sample_count - 1U];
+    }
+
+    s_tts_out_prev_sample = last;
+    s_tts_out_prev_sample_valid = true;
+}
+
+static void audio_worker_apply_fg_declick(int16_t *samples, size_t sample_count)
+{
+    if (samples == NULL || sample_count == 0U) {
+        return;
+    }
+
+    int16_t first = samples[0];
+    int16_t last = samples[sample_count - 1U];
+    if (!s_fg_prev_sample_valid) {
+        s_fg_prev_sample = last;
+        s_fg_prev_sample_valid = true;
+        return;
+    }
+
+    int32_t jump = (int32_t)first - (int32_t)s_fg_prev_sample;
+    if (jump < 0) {
+        jump = -jump;
+    }
+    uint32_t abs_jump = (uint32_t)jump;
+    if (abs_jump > s_fg_boundary_jump_max) {
+        s_fg_boundary_jump_max = abs_jump;
+    }
+    if (abs_jump >= AUDIO_FG_DECLICK_THRESHOLD) {
+        size_t ramp_n = sample_count;
+        if (ramp_n > AUDIO_FG_DECLICK_RAMP_SAMPLES) {
+            ramp_n = AUDIO_FG_DECLICK_RAMP_SAMPLES;
+        }
+        int32_t prev = (int32_t)s_fg_prev_sample;
+        for (size_t i = 0; i < ramp_n; ++i) {
+            int32_t target = (int32_t)samples[i];
+            int32_t mixed = prev + (int32_t)(((int64_t)(target - prev) * (int64_t)(i + 1U)) / (int64_t)ramp_n);
+            samples[i] = clamp_i16(mixed);
+        }
+        s_fg_boundary_jump_count++;
+        last = samples[sample_count - 1U];
+    }
+
+    s_fg_prev_sample = last;
+    s_fg_prev_sample_valid = true;
+}
+
+static void audio_worker_probe_click_spike(const int16_t *samples, size_t sample_count, const char *stage)
+{
+    if (samples == NULL || sample_count < 3U || s_click_probe_budget == 0U) {
+        return;
+    }
+    for (size_t i = 1U; i + 1U < sample_count; ++i) {
+        int32_t p = (int32_t)samples[i - 1U];
+        int32_t c = (int32_t)samples[i];
+        int32_t n = (int32_t)samples[i + 1U];
+        int32_t ap = (p < 0) ? -p : p;
+        int32_t ac = (c < 0) ? -c : c;
+        int32_t an = (n < 0) ? -n : n;
+        int32_t d1 = c - p;
+        int32_t d2 = c - n;
+        if (d1 < 0) {
+            d1 = -d1;
+        }
+        if (d2 < 0) {
+            d2 = -d2;
+        }
+        if (ac >= AUDIO_CLICK_SPIKE_ABS &&
+            ap <= AUDIO_CLICK_NEIGHBOR_ABS &&
+            an <= AUDIO_CLICK_NEIGHBOR_ABS &&
+            d1 >= AUDIO_CLICK_DELTA &&
+            d2 >= AUDIO_CLICK_DELTA) {
+            uint64_t at_sample = s_click_probe_emitted_samples + (uint64_t)i;
+            uint32_t at_ms = (uint32_t)((at_sample * 1000ULL) / (uint64_t)CONFIG_ORB_AUDIO_I2S_SAMPLE_RATE_HZ);
+            ESP_LOGW(TAG,
+                     "click_probe stage=%s at=%" PRIu64 " (%" PRIu32 "ms) p=%ld c=%ld n=%ld d1=%ld d2=%ld",
+                     stage,
+                     at_sample,
+                     at_ms,
+                     (long)p,
+                     (long)c,
+                     (long)n,
+                     (long)d1,
+                     (long)d2);
+            s_click_probe_budget--;
+            break;
+        }
+    }
+}
+
 bool audio_worker_pcm_has_signal(const int16_t *samples, size_t sample_count, uint32_t abs_avg_threshold)
 {
     if (samples == NULL || sample_count == 0U) {
@@ -133,7 +332,10 @@ size_t audio_worker_compose_mixed_chunk(const int16_t *fg_samples, size_t sample
     if (sample_count == 0U) {
         return 0U;
     }
-    if (!has_foreground && !s_bg.active) {
+    /* Keep DAC fed with explicit silence while PCM stream is active but
+     * foreground chunks are temporarily absent (tail/drain window). Without
+     * this, some I2S/DMA paths may hold/repeat last non-zero fragment. */
+    if (!has_foreground && !s_bg.active && !s_pcm_stream_active) {
         return 0U;
     }
 
@@ -141,8 +343,41 @@ size_t audio_worker_compose_mixed_chunk(const int16_t *fg_samples, size_t sample
         if (s_pcm_stream_active) {
             uint16_t base_gain = fg_gain_permille();
             for (size_t i = 0; i < sample_count; ++i) {
-                int64_t scaled = (int64_t)fg_samples[i];
+                int16_t in = fg_samples[i];
+                int32_t iv = (int32_t)in;
+                int32_t abs_iv = (iv < 0) ? -iv : iv;
+                bool voiced_now = s_pcm_fg_signal_prev;
+                bool onset = false;
+
+                if (abs_iv <= (int32_t)AUDIO_FG_ONSET_OFF_THRESHOLD) {
+                    if (s_pcm_fg_silence_run < 0xFFFFU) {
+                        s_pcm_fg_silence_run++;
+                    }
+                    if (s_pcm_fg_silence_run >= AUDIO_FG_ONSET_SILENCE_SAMPLES) {
+                        voiced_now = false;
+                    }
+                } else if (abs_iv >= (int32_t)AUDIO_FG_ONSET_ON_THRESHOLD) {
+                    if (!s_pcm_fg_signal_prev && s_pcm_fg_silence_run >= AUDIO_FG_ONSET_SILENCE_SAMPLES) {
+                        /* Re-arm attack on phrase start after real silence window. */
+                        audio_worker_fg_attack_reset();
+                        onset = true;
+                    }
+                    s_pcm_fg_silence_run = 0U;
+                    voiced_now = true;
+                } else {
+                    /* Hysteresis middle band: keep previous state. */
+                    if (s_pcm_fg_signal_prev) {
+                        s_pcm_fg_silence_run = 0U;
+                    }
+                }
+
+                s_pcm_fg_signal_prev = voiced_now;
+                (void)onset;
+
+                uint16_t attack_gain = audio_worker_fg_attack_next_permille();
+                int64_t scaled = (int64_t)in;
                 scaled = (scaled * (int64_t)base_gain) / 1000LL;
+                scaled = (scaled * (int64_t)attack_gain) / 1000LL;
                 s_mix_buffer[i] = clamp_i16((int32_t)scaled);
             }
         } else {
@@ -166,8 +401,13 @@ size_t audio_worker_compose_mixed_chunk(const int16_t *fg_samples, size_t sample
                 }
             }
         }
+        audio_worker_apply_fg_declick(s_mix_buffer, sample_count);
     } else {
         (void)memset(s_mix_buffer, 0, sample_count * sizeof(int16_t));
+        s_pcm_fg_signal_prev = false;
+        s_pcm_fg_silence_run = AUDIO_FG_ONSET_SILENCE_SAMPLES;
+        s_fg_prev_sample = 0;
+        s_fg_prev_sample_valid = true;
     }
 
     if (s_bg.active) {
@@ -176,12 +416,25 @@ size_t audio_worker_compose_mixed_chunk(const int16_t *fg_samples, size_t sample
             (void)memset(&s_bg_buffer[got], 0, (sample_count - got) * sizeof(int16_t));
         }
 
-        uint16_t bg_gain = s_bg.gain_permille;
-        for (size_t i = 0; i < sample_count; ++i) {
-            int32_t mixed = (int32_t)s_mix_buffer[i];
-            mixed += ((int32_t)s_bg_buffer[i] * (int32_t)bg_gain) / 1000;
-            s_mix_buffer[i] = clamp_i16(mixed);
+        if (s_bg.fade_active) {
+            for (size_t i = 0; i < sample_count; ++i) {
+                uint16_t bg_gain = bg_gain_for_sample_offset(i);
+                int32_t mixed = (int32_t)s_mix_buffer[i];
+                mixed += ((int32_t)s_bg_buffer[i] * (int32_t)bg_gain) / 1000;
+                s_mix_buffer[i] = clamp_i16(mixed);
+            }
+        } else {
+            uint16_t bg_gain = s_bg.gain_permille;
+            for (size_t i = 0; i < sample_count; ++i) {
+                int32_t mixed = (int32_t)s_mix_buffer[i];
+                mixed += ((int32_t)s_bg_buffer[i] * (int32_t)bg_gain) / 1000;
+                s_mix_buffer[i] = clamp_i16(mixed);
+            }
         }
+        /*
+         * Fade state ownership remains in audio_worker_bg_update_fade();
+         * here we only read interpolated gain for smoother per-sample mix.
+         */
         audio_worker_bg_update_fade(sample_count);
     }
 
@@ -206,6 +459,9 @@ esp_err_t audio_worker_write_mixed_output(const int16_t *fg_samples, size_t samp
             return ESP_OK;
         }
 
+        audio_worker_apply_output_declick(s_mix_buffer, composed);
+        audio_worker_probe_click_spike(s_mix_buffer, composed, "out");
+
         if (has_foreground && fg_chunk != NULL) {
             audio_worker_audio_level_process_samples(fg_chunk, composed);
             if (s_pcm_stream_active) {
@@ -226,7 +482,8 @@ esp_err_t audio_worker_write_mixed_output(const int16_t *fg_samples, size_t samp
                     ESP_LOGD(TAG,
                              "tts mix diag fg[min=%d max=%d abs_avg=%" PRIu32 "]"
                              " out[min=%d max=%d abs_avg=%" PRIu32 " clip=%u/1000]"
-                             " bg=%u bg_gain=%u vol=%u",
+                             " bg=%u bg_gain=%u vol=%u fg_jumps=%" PRIu32 " fg_jump_max=%" PRIu32
+                             " out_jumps=%" PRIu32 " out_jump_max=%" PRIu32,
                              (int)fg_min,
                              (int)fg_max,
                              fg_abs_avg,
@@ -236,7 +493,11 @@ esp_err_t audio_worker_write_mixed_output(const int16_t *fg_samples, size_t samp
                              (unsigned)out_clip_pm,
                              s_bg.active ? 1U : 0U,
                              (unsigned)s_bg.gain_permille,
-                             (unsigned)s_volume);
+                             (unsigned)s_volume,
+                             s_fg_boundary_jump_count,
+                             s_fg_boundary_jump_max,
+                             s_tts_out_boundary_jump_count,
+                             s_tts_out_boundary_jump_max);
                 }
             }
         }
@@ -245,6 +506,7 @@ esp_err_t audio_worker_write_mixed_output(const int16_t *fg_samples, size_t samp
         if (wr_err != ESP_OK) {
             return wr_err;
         }
+        s_click_probe_emitted_samples += (uint64_t)composed;
 
         if (!has_foreground && sample_count == 0U) {
             return ESP_OK;

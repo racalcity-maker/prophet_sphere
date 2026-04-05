@@ -125,9 +125,22 @@ def _apply_pitch_rate_scale_i16(samples: np.ndarray, pitch_scale: float) -> np.n
     return _resample_linear_i16(samples, pseudo_src_rate, pseudo_dst_rate)
 
 
-def _apply_tempo_scale_i16(samples: np.ndarray, tempo_scale: float) -> np.ndarray:
+def _apply_tempo_resample_i16(samples: np.ndarray, tempo_scale: float) -> np.ndarray:
+    if samples.size == 0:
+        return samples.astype(np.int16, copy=False)
+    if not math.isfinite(tempo_scale):
+        return samples.astype(np.int16, copy=False)
+    scale = max(0.50, min(1.40, float(tempo_scale)))
+    if abs(scale - 1.0) < 0.01:
+        return samples.astype(np.int16, copy=False)
+    pseudo_src_rate = max(1, int(round(1000.0 * scale)))
+    pseudo_dst_rate = 1000
+    return _resample_linear_i16(samples, pseudo_src_rate, pseudo_dst_rate)
+
+
+def _time_stretch_ola_i16(samples: np.ndarray, tempo_scale: float) -> np.ndarray:
     """
-    Tempo/rate transform:
+    Pitch-preserving tempo transform (basic OLA):
     tempo_scale < 1.0 -> slower speech
     tempo_scale > 1.0 -> faster speech
     """
@@ -136,13 +149,118 @@ def _apply_tempo_scale_i16(samples: np.ndarray, tempo_scale: float) -> np.ndarra
     if not math.isfinite(tempo_scale):
         return samples.astype(np.int16, copy=False)
 
-    scale = max(0.65, min(1.40, float(tempo_scale)))
+    scale = max(0.50, min(1.40, float(tempo_scale)))
     if abs(scale - 1.0) < 0.01:
         return samples.astype(np.int16, copy=False)
 
-    pseudo_src_rate = max(1, int(round(1000.0 * scale)))
-    pseudo_dst_rate = 1000
-    return _resample_linear_i16(samples, pseudo_src_rate, pseudo_dst_rate)
+    src = samples.astype(np.float32)
+    src_n = int(src.size)
+    # Too short clips sound better with plain resample fallback.
+    if src_n < 4096:
+        return _apply_tempo_resample_i16(samples, scale)
+
+    # 1024-window OLA is a good quality/speed trade-off for Pi CPU.
+    win = 1024
+    hop_out = win // 4
+    hop_in = max(1, int(round(hop_out * scale)))
+
+    if hop_in <= 0 or hop_out <= 0:
+        return _apply_tempo_resample_i16(samples, scale)
+
+    window = np.hanning(win).astype(np.float32)
+    if not np.any(window > 0.0):
+        return _apply_tempo_resample_i16(samples, scale)
+    win_sq = window * window
+
+    n_frames = 1 + int(max(0, (src_n - win) // hop_in))
+    if n_frames < 2:
+        return _apply_tempo_resample_i16(samples, scale)
+
+    out_len = int((n_frames - 1) * hop_out + win)
+    out = np.zeros((out_len,), dtype=np.float32)
+    norm = np.zeros((out_len,), dtype=np.float32)
+
+    frame_count = 0
+    in_pos_f = 0.0
+    for i in range(n_frames):
+        in_pos = int(round(in_pos_f))
+        if in_pos + win > src_n:
+            break
+        out_pos = i * hop_out
+        frame = src[in_pos:in_pos + win] * window
+        out[out_pos:out_pos + win] += frame
+        norm[out_pos:out_pos + win] += win_sq
+        frame_count += 1
+        in_pos_f += float(hop_in)
+
+    if frame_count < 2:
+        return _apply_tempo_resample_i16(samples, scale)
+
+    nz = norm > 1e-7
+    out[nz] /= norm[nz]
+    out[~nz] = 0.0
+
+    target_len = max(1, int(round(src_n / scale)))
+    if out.size > target_len:
+        out = out[:target_len]
+    elif out.size < target_len:
+        out = np.concatenate((out, np.zeros((target_len - out.size,), dtype=np.float32)))
+
+    out = np.clip(out, -32768.0, 32767.0)
+    return out.astype(np.int16)
+
+
+def _apply_tempo_scale_i16(samples: np.ndarray, tempo_scale: float) -> np.ndarray:
+    try:
+        return _time_stretch_ola_i16(samples, tempo_scale)
+    except Exception:
+        # Never fail TTS pipeline on tempo DSP path.
+        return _apply_tempo_resample_i16(samples, tempo_scale)
+
+
+def list_tts_voices(cfg: TtsConfig) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "backend": (cfg.backend or "").strip().lower(),
+        "silero": {
+            "language": (cfg.silero_language or "").strip(),
+            "speaker_model": (cfg.silero_speaker_model or "").strip(),
+            "selected": (cfg.silero_speaker or "").strip(),
+            "speakers": [],
+        },
+        "piper": {
+            "model_dir": str(cfg.piper_model_dir.expanduser().resolve()),
+            "selected": (cfg.piper_default_model or "").strip(),
+            "models": [],
+        },
+    }
+
+    # Piper: list local .onnx models from model dir.
+    try:
+        model_dir = cfg.piper_model_dir.expanduser().resolve()
+        if model_dir.exists() and model_dir.is_dir():
+            models = sorted(p.name for p in model_dir.glob("*.onnx"))
+            out["piper"]["models"] = models
+    except Exception as exc:
+        out["piper"]["error"] = str(exc)
+
+    # Silero: list speakers from loaded model metadata.
+    try:
+        model, _ = _load_silero_model(cfg)
+        speakers = getattr(model, "speakers", None)
+        if isinstance(speakers, (list, tuple)):
+            uniq: list[str] = []
+            seen = set()
+            for s in speakers:
+                v = str(s).strip()
+                if not v or v in seen:
+                    continue
+                seen.add(v)
+                uniq.append(v)
+            out["silero"]["speakers"] = uniq
+    except Exception as exc:
+        out["silero"]["error"] = str(exc)
+
+    return out
 
 
 def _postprocess_tail(samples: np.ndarray, sample_rate: int, fade_ms: int, silence_ms: int) -> np.ndarray:
@@ -150,8 +268,8 @@ def _postprocess_tail(samples: np.ndarray, sample_rate: int, fade_ms: int, silen
         return samples.astype(np.int16, copy=False)
 
     out = samples.astype(np.int16, copy=True)
-    # Short fade-in to suppress click at segment start.
-    fade_in_n = max(0, int(sample_rate * 12 / 1000))
+    # Slightly longer fade-in to suppress phrase onset click on embedded DAC paths.
+    fade_in_n = max(0, int(sample_rate * 28 / 1000))
     fade_n = max(0, int(sample_rate * max(0, int(fade_ms)) / 1000))
     silence_n = max(0, int(sample_rate * max(0, int(silence_ms)) / 1000))
 
@@ -172,7 +290,27 @@ def _postprocess_tail(samples: np.ndarray, sample_rate: int, fade_ms: int, silen
     if silence_n > 0:
         out = np.concatenate((out, np.zeros((silence_n,), dtype=np.int16)))
 
+    # Always force a tiny terminal zero tail so downstream DAC/I2S never holds
+    # a non-zero last sample when stream stops.
+    if out.size > 0:
+        tail_zero_n = max(8, int(sample_rate * 0.003))
+        tail_zero_n = min(tail_zero_n, out.size)
+        out[-tail_zero_n:] = np.int16(0)
+
     return out
+
+
+def _normalize_peak_i16(samples: np.ndarray, target_peak: int = 30000) -> np.ndarray:
+    if samples.size == 0:
+        return samples.astype(np.int16, copy=False)
+    target = int(max(12000, min(32760, target_peak)))
+    x = samples.astype(np.float32, copy=False)
+    peak = float(np.max(np.abs(x)))
+    if not math.isfinite(peak) or peak <= 0.0 or peak <= float(target):
+        return samples.astype(np.int16, copy=False)
+    gain = float(target) / peak
+    y = x * gain
+    return np.clip(y, -32768.0, 32767.0).astype(np.int16)
 
 
 def _apply_echo_i16(
@@ -379,6 +517,7 @@ async def _synthesize_piper(text: str, target_rate: int, voice_hint: str, cfg: T
         room_scale=cfg.tts_reverb_room_scale,
         damp=cfg.tts_reverb_damp,
     )
+    out_samples = _normalize_peak_i16(out_samples, target_peak=29200)
     out_samples = _postprocess_tail(
         out_samples,
         target_rate,
@@ -586,6 +725,7 @@ def _silero_synthesize_sync(text: str, target_rate: int, cfg: TtsConfig) -> TtsR
         room_scale=cfg.tts_reverb_room_scale,
         damp=cfg.tts_reverb_damp,
     )
+    out_samples = _normalize_peak_i16(out_samples, target_peak=29200)
     out_samples = _postprocess_tail(
         out_samples,
         target_rate,
@@ -682,6 +822,7 @@ def _yandex_synthesize_sync(text: str, target_rate: int, cfg: TtsConfig) -> TtsR
         room_scale=cfg.tts_reverb_room_scale,
         damp=cfg.tts_reverb_damp,
     )
+    out_samples = _normalize_peak_i16(out_samples, target_peak=29200)
     out_samples = _postprocess_tail(
         out_samples,
         target_rate,

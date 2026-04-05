@@ -30,9 +30,9 @@ extern const unsigned char _binary_prvtkey_pem_end[] asm("_binary_prvtkey_pem_en
 
 #define ORB_WEB_PORTAL_URI_COUNT 7U
 #if CONFIG_HTTPD_WS_SUPPORT
-#define ORB_WEB_REST_URI_COUNT 18U
+#define ORB_WEB_REST_URI_COUNT 20U
 #else
-#define ORB_WEB_REST_URI_COUNT 17U
+#define ORB_WEB_REST_URI_COUNT 19U
 #endif
 #define ORB_WEB_URI_REQUIRED (ORB_WEB_PORTAL_URI_COUNT + ORB_WEB_REST_URI_COUNT)
 

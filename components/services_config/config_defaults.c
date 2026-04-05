@@ -29,6 +29,9 @@
 #ifndef CONFIG_ORB_HYBRID_MIC_CAPTURE_DEFAULT_MS
 #define CONFIG_ORB_HYBRID_MIC_CAPTURE_DEFAULT_MS 5000
 #endif
+#ifndef CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX
+#define CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX 1
+#endif
 #ifndef CONFIG_ORB_CFG_DEFAULT_OFFLINE_SUBMODE_LOTTERY
 #define CONFIG_ORB_CFG_DEFAULT_OFFLINE_SUBMODE_LOTTERY 0
 #endif
@@ -71,6 +74,7 @@ orb_runtime_config_t config_defaults_load(void)
         .prophecy_gap34_ms = ORB_PROPHECY_GAP34_DEFAULT_MS,
         .prophecy_leadin_wait_ms = ORB_PROPHECY_LEADIN_DEFAULT_MS,
         .hybrid_reject_threshold_permille = (uint16_t)CONFIG_ORB_HYBRID_REJECT_THRESHOLD_PERMILLE,
+        .hybrid_unknown_retry_max = (uint8_t)CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX,
         .prophecy_bg_gain_permille = CONFIG_ORB_AUDIO_PROPHECY_BG_GAIN_PERMILLE,
         .prophecy_bg_fade_in_ms = CONFIG_ORB_AUDIO_PROPHECY_BG_FADE_IN_MS,
         .prophecy_bg_fade_out_ms = CONFIG_ORB_AUDIO_PROPHECY_BG_FADE_OUT_MS,

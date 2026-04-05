@@ -11,6 +11,8 @@ idf_component_register(
         "rest_api_network.c"
         "rest_api_offline.c"
         "rest_api_talk.c"
+        "rest_api_diag.c"
+        "rest_api_server_tts.c"
         "web_portal.c"
     INCLUDE_DIRS
         "include"
@@ -27,6 +29,7 @@ idf_component_register(
         services_network
         esp_http_server
         esp_https_server
+        esp_http_client
         esp_timer
     EMBED_TXTFILES
         "certs/servercert.pem"

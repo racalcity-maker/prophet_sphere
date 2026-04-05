@@ -27,6 +27,7 @@ esp_err_t config_manager_set_aura_selected_color(const char *color_name);
 esp_err_t config_manager_set_prophecy_timing(uint32_t gap12_ms, uint32_t gap23_ms, uint32_t gap34_ms, uint32_t leadin_wait_ms);
 esp_err_t config_manager_set_prophecy_background(uint16_t gain_permille, uint32_t fade_in_ms, uint32_t fade_out_ms);
 esp_err_t config_manager_set_hybrid_params(uint16_t reject_threshold_permille, uint32_t mic_capture_ms);
+esp_err_t config_manager_set_hybrid_unknown_retry_max(uint8_t unknown_retry_max);
 esp_err_t config_manager_set_wifi_sta_credentials(const char *ssid, const char *password);
 esp_err_t config_manager_has_persisted_wifi_sta_credentials(bool *has_credentials);
 esp_err_t config_manager_save(void);

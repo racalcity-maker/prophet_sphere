@@ -37,16 +37,22 @@ static const char *TAG = LOG_TAG_MODE_HYBRID;
 #define HYBRID_TTS_STREAM_STARTED_MARKER UINT16_MAX
 #define HYBRID_REMOTE_INTRO_TTS_TEXT "__ORACLE_INTRO__"
 #define HYBRID_REMOTE_ANSWER_TTS_TEXT "__ORACLE_AUTO__"
+#define HYBRID_REMOTE_RETRY_TTS_TEXT "__ORACLE_RETRY__"
 /* Keep TTS background lower than prophecy background. */
 #define HYBRID_TTS_BG_GAIN_MAX_PERMILLE 180U
 #define HYBRID_BG_GAIN_LISTEN_PERMILLE 100U
 #define HYBRID_BG_GAIN_SWITCH_FADE_MS 250U
 #define HYBRID_INTENT_COLOR_RAMP_MS 800U
 
+#ifndef CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX
+#define CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX 1
+#endif
+
 typedef enum {
     HYBRID_FLOW_IDLE = 0,
     HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE,
     HYBRID_FLOW_WAIT_MIC_DONE,
+    HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE,
     HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE,
     HYBRID_FLOW_WAIT_FAIL_PROMPT_DONE,
     HYBRID_FLOW_WAIT_BG_FADE_OUT,
@@ -57,6 +63,7 @@ typedef struct {
     uint32_t bg_fade_in_ms;
     uint32_t bg_fade_out_ms;
     uint16_t bg_gain_permille;
+    uint8_t unknown_retry_max;
 } hybrid_runtime_cfg_t;
 
 static hybrid_flow_t s_flow = HYBRID_FLOW_IDLE;
@@ -65,11 +72,27 @@ static hybrid_runtime_cfg_t s_runtime = {
     .bg_fade_in_ms = (uint32_t)CONFIG_ORB_AUDIO_PROPHECY_BG_FADE_IN_MS,
     .bg_fade_out_ms = (uint32_t)CONFIG_ORB_AUDIO_PROPHECY_BG_FADE_OUT_MS,
     .bg_gain_permille = (uint16_t)CONFIG_ORB_AUDIO_PROPHECY_BG_GAIN_PERMILLE,
+    .unknown_retry_max = (uint8_t)CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX,
 };
 static uint32_t s_expected_fail_asset = 0U;
 static uint32_t s_active_capture_id = 0U;
 static uint32_t s_next_capture_id = 1U;
 static bool s_remote_stream_started = false;
+static uint8_t s_unknown_retry_count = 0U;
+
+static uint8_t unknown_retry_limit(void)
+{
+    uint32_t v = (uint32_t)s_runtime.unknown_retry_max;
+    if (v > 2U) {
+        v = 2U;
+    }
+    return (uint8_t)v;
+}
+
+static bool intent_is_unknown_like(uint8_t intent_id)
+{
+    return intent_id == ORB_INTENT_UNKNOWN || intent_id == ORB_INTENT_UNCERTAIN;
+}
 
 static uint32_t next_capture_id(void)
 {
@@ -86,6 +109,7 @@ static void reset_flow(void)
     s_expected_fail_asset = 0U;
     s_active_capture_id = 0U;
     s_remote_stream_started = false;
+    s_unknown_retry_count = 0U;
 }
 
 static void load_runtime_cfg(void)
@@ -98,6 +122,9 @@ static void load_runtime_cfg(void)
     s_runtime.bg_fade_in_ms = runtime.prophecy_bg_fade_in_ms;
     s_runtime.bg_fade_out_ms = runtime.prophecy_bg_fade_out_ms;
     s_runtime.bg_gain_permille = runtime.prophecy_bg_gain_permille;
+    s_runtime.unknown_retry_max = (runtime.hybrid_unknown_retry_max <= 2U)
+                                      ? runtime.hybrid_unknown_retry_max
+                                      : 2U;
     (void)runtime.hybrid_mic_capture_ms;
     /* Hybrid remote flow uses fixed 8s listen window. */
     s_runtime.mic_capture_ms = HYBRID_MIC_CAPTURE_MS_DEFAULT;
@@ -116,6 +143,7 @@ static uint32_t scene_for_flow(hybrid_flow_t flow)
     case HYBRID_FLOW_WAIT_MIC_DONE:
         return HYBRID_SCENE_VORTEX_LISTEN_ID;
     case HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE:
+    case HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE:
     case HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE:
     case HYBRID_FLOW_WAIT_FAIL_PROMPT_DONE:
     case HYBRID_FLOW_WAIT_BG_FADE_OUT:
@@ -225,6 +253,8 @@ static const char *flow_name(hybrid_flow_t flow)
         return "wait_remote_intro_tts_done";
     case HYBRID_FLOW_WAIT_MIC_DONE:
         return "wait_mic_done";
+    case HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE:
+        return "wait_remote_retry_tts_done";
     case HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE:
         return "wait_remote_answer_tts_done";
     case HYBRID_FLOW_WAIT_FAIL_PROMPT_DONE:
@@ -363,6 +393,28 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
         if (s_flow != HYBRID_FLOW_WAIT_MIC_DONE || event->value != s_active_capture_id) {
             break;
         }
+        if (intent_is_unknown_like(event->intent_id) && s_unknown_retry_count < unknown_retry_limit()) {
+            s_unknown_retry_count++;
+            action->id = APP_MODE_ACTION_MIC_TTS_PLAY_TEXT;
+            action->led.scene_id = HYBRID_SCENE_VORTEX_ID;
+            action->led.fade_ms = HYBRID_INTENT_COLOR_RAMP_MS;
+            resolve_intent_color(event->intent_id, &action->led.color_r, &action->led.color_g, &action->led.color_b);
+            action->mic.tts_timeout_ms = HYBRID_REMOTE_TTS_TIMEOUT_MS;
+            action->mic.ws_timeout_ms = HYBRID_REMOTE_FIRST_CHUNK_TIMEOUT_MS;
+            action->bg.fade_ms = HYBRID_BG_GAIN_SWITCH_FADE_MS;
+            action->bg.gain_permille = (s_runtime.bg_gain_permille > HYBRID_TTS_BG_GAIN_MAX_PERMILLE)
+                                           ? HYBRID_TTS_BG_GAIN_MAX_PERMILLE
+                                           : s_runtime.bg_gain_permille;
+            (void)snprintf(action->mic.tts_text, sizeof(action->mic.tts_text), "%s", HYBRID_REMOTE_RETRY_TTS_TEXT);
+            set_flow_and_scene(HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE, action);
+            s_remote_stream_started = false;
+            ESP_LOGW(TAG,
+                     "mic done id=%" PRIu32 " unknown intent -> remote retry prompt (%u/%u)",
+                     event->value,
+                     (unsigned)s_unknown_retry_count,
+                     (unsigned)unknown_retry_limit());
+            break;
+        }
         action->id = APP_MODE_ACTION_MIC_TTS_PLAY_TEXT;
         action->led.scene_id = HYBRID_SCENE_VORTEX_ID;
         action->led.fade_ms = HYBRID_INTENT_COLOR_RAMP_MS;
@@ -406,6 +458,30 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
                      s_runtime.mic_capture_ms);
             break;
         }
+        if (s_flow == HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE) {
+            if (!s_remote_stream_started || event->id == APP_MODE_EVENT_MIC_TTS_ERROR) {
+                action->id = APP_MODE_ACTION_PLAY_AUDIO_ASSET;
+                action->audio.asset_id = s_expected_fail_asset;
+                set_flow_and_scene(HYBRID_FLOW_WAIT_FAIL_PROMPT_DONE, action);
+                ESP_LOGW(TAG, "remote retry prompt failed before completion -> local fail prompt");
+                break;
+            }
+            s_active_capture_id = next_capture_id();
+            action->id = APP_MODE_ACTION_MIC_START_CAPTURE;
+            action->led.scene_id = HYBRID_SCENE_VORTEX_LISTEN_ID;
+            action->mic.capture_id = s_active_capture_id;
+            action->mic.capture_ms = s_runtime.mic_capture_ms;
+            action->bg.fade_ms = HYBRID_BG_GAIN_SWITCH_FADE_MS;
+            action->bg.gain_permille = HYBRID_BG_GAIN_LISTEN_PERMILLE;
+            set_flow_and_scene(HYBRID_FLOW_WAIT_MIC_DONE, action);
+            ESP_LOGW(TAG,
+                     "remote retry prompt done -> mic recapture id=%" PRIu32 " ms=%" PRIu32 " (retry=%u/%u)",
+                     s_active_capture_id,
+                     s_runtime.mic_capture_ms,
+                     (unsigned)s_unknown_retry_count,
+                     (unsigned)unknown_retry_limit());
+            break;
+        }
         if (s_flow != HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE) {
             break;
         }
@@ -429,6 +505,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
             break;
         }
         if (s_flow != HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE &&
+            s_flow != HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE &&
             s_flow != HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE) {
             break;
         }
@@ -458,6 +535,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
 
     case APP_MODE_EVENT_MIC_REMOTE_PLAN_READY:
         if ((s_flow != HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE &&
+             s_flow != HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE &&
              s_flow != HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE) ||
             s_remote_stream_started ||
             event->code != (int32_t)HYBRID_TTS_STREAM_STARTED_MARKER) {
@@ -465,7 +543,8 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
         }
         s_remote_stream_started = true;
         action->id = APP_MODE_ACTION_HYBRID_WS_TIMER_START;
-        action->mic.ws_timeout_ms = (s_flow == HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE)
+        action->mic.ws_timeout_ms = (s_flow == HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE ||
+                                     s_flow == HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE)
                                         ? HYBRID_REMOTE_INTRO_STREAM_MAX_MS
                                         : HYBRID_REMOTE_STREAM_MAX_MS;
         ESP_LOGW(TAG,
@@ -482,6 +561,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
     case APP_MODE_EVENT_MIC_ERROR:
         if (s_flow != HYBRID_FLOW_IDLE) {
             if (s_flow == HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE ||
+                s_flow == HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE ||
                 s_flow == HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE ||
                 s_flow == HYBRID_FLOW_WAIT_FAIL_PROMPT_DONE) {
                 action->id = APP_MODE_ACTION_AUDIO_BG_FADE_OUT;
@@ -516,3 +596,4 @@ const app_mode_t *mode_hybrid_ai_get(void)
     };
     return &mode;
 }
+

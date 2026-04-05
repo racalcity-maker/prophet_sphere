@@ -33,7 +33,8 @@ static esp_err_t send_config_snapshot(httpd_req_t *req)
                    "{\"ok\":true,\"brightness\":%u,\"volume\":%u,\"network\":%s,\"mqtt\":%s,\"ai\":%s,\"web\":%s,"
                    "\"offline_submode\":\"%s\",\"aura_gap_ms\":%" PRIu32 ","
                    "\"aura_intro_dir\":\"%s\",\"aura_response_dir\":\"%s\","
-                   "\"hybrid_reject_threshold_permille\":%u,\"hybrid_mic_capture_ms\":%" PRIu32 "}",
+                   "\"hybrid_reject_threshold_permille\":%u,\"hybrid_mic_capture_ms\":%" PRIu32 ","
+                   "\"hybrid_unknown_retry_max\":%u,\"prophecy_bg_fade_out_ms\":%" PRIu32 "}",
                    cfg.led_brightness,
                    cfg.audio_volume,
                    cfg.network_enabled ? "true" : "false",
@@ -45,12 +46,15 @@ static esp_err_t send_config_snapshot(httpd_req_t *req)
                    cfg.aura_intro_dir,
                    cfg.aura_response_dir,
                    (unsigned)cfg.hybrid_reject_threshold_permille,
-                   cfg.hybrid_mic_capture_ms);
+                   cfg.hybrid_mic_capture_ms,
+                   (unsigned)cfg.hybrid_unknown_retry_max,
+                   cfg.prophecy_bg_fade_out_ms);
     return rest_api_send_json(req, "200 OK", json);
 }
 
 static esp_err_t config_get_handler(httpd_req_t *req)
 {
+    ESP_LOGI(TAG, "config GET uri=%s", req ? req->uri : "-");
     return send_config_snapshot(req);
 }
 
@@ -65,6 +69,14 @@ static esp_err_t config_post_handler(httpd_req_t *req)
 
     bool has_any = false;
     char value[160];
+    bool brightness_changed = false;
+    bool volume_changed = false;
+    bool submode_changed = false;
+    bool aura_changed = false;
+    bool hybrid_changed = false;
+    bool hybrid_retry_changed = false;
+    bool bg_fade_out_changed = false;
+    bool flags_changed = false;
 
     if (rest_api_query_value(req, "brightness", value, sizeof(value)) == ESP_OK) {
         uint32_t brightness = 0;
@@ -75,6 +87,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         (void)led_service_set_brightness((led_brightness_t)brightness, request_timeout_ms());
         cfg.led_brightness = (uint8_t)brightness;
         has_any = true;
+        brightness_changed = true;
     }
 
     if (rest_api_query_value(req, "volume", value, sizeof(value)) == ESP_OK) {
@@ -86,6 +99,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         (void)audio_service_set_volume((uint8_t)volume, request_timeout_ms());
         cfg.audio_volume = (uint8_t)volume;
         has_any = true;
+        volume_changed = true;
     }
 
     if (rest_api_query_value(req, "offline_submode", value, sizeof(value)) == ESP_OK) {
@@ -96,6 +110,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         (void)config_manager_set_offline_submode(submode);
         cfg.offline_submode = submode;
         has_any = true;
+        submode_changed = true;
     }
 
     if (rest_api_query_value(req, "aura_gap_ms", value, sizeof(value)) == ESP_OK) {
@@ -106,6 +121,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         (void)config_manager_set_aura_gap_ms(gap_ms);
         cfg.aura_gap_ms = gap_ms;
         has_any = true;
+        aura_changed = true;
     }
 
     char intro_dir[ORB_CONFIG_PATH_MAX] = { 0 };
@@ -127,11 +143,12 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         (void)snprintf(cfg.aura_intro_dir, sizeof(cfg.aura_intro_dir), "%s", intro);
         (void)snprintf(cfg.aura_response_dir, sizeof(cfg.aura_response_dir), "%s", response);
         has_any = true;
+        aura_changed = true;
     }
 
-    bool hybrid_changed = false;
     uint32_t reject_th_u32 = cfg.hybrid_reject_threshold_permille;
     uint32_t mic_capture_ms = cfg.hybrid_mic_capture_ms;
+    uint32_t unknown_retry_u32 = cfg.hybrid_unknown_retry_max;
     if (rest_api_query_value(req, "hybrid_reject_threshold_permille", value, sizeof(value)) == ESP_OK) {
         if (!rest_api_parse_u32(value, &reject_th_u32) || reject_th_u32 > 1000U) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_hybrid_reject_threshold");
@@ -144,12 +161,42 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         }
         hybrid_changed = true;
     }
+    if (rest_api_query_value(req, "hybrid_unknown_retry_max", value, sizeof(value)) == ESP_OK) {
+        if (!rest_api_parse_u32(value, &unknown_retry_u32) || unknown_retry_u32 > 2U) {
+            return rest_api_send_error_json(req, "400 Bad Request", "invalid_hybrid_unknown_retry_max");
+        }
+        hybrid_retry_changed = true;
+    }
     if (hybrid_changed) {
         if (config_manager_set_hybrid_params((uint16_t)reject_th_u32, mic_capture_ms) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_hybrid_params");
         }
         cfg.hybrid_reject_threshold_permille = (uint16_t)reject_th_u32;
         cfg.hybrid_mic_capture_ms = mic_capture_ms;
+        has_any = true;
+    }
+    if (hybrid_retry_changed) {
+        if (config_manager_set_hybrid_unknown_retry_max((uint8_t)unknown_retry_u32) != ESP_OK) {
+            return rest_api_send_error_json(req, "400 Bad Request", "invalid_hybrid_unknown_retry_max");
+        }
+        cfg.hybrid_unknown_retry_max = (uint8_t)unknown_retry_u32;
+        has_any = true;
+    }
+
+    uint32_t bg_fade_out_ms = cfg.prophecy_bg_fade_out_ms;
+    if (rest_api_query_value(req, "prophecy_bg_fade_out_ms", value, sizeof(value)) == ESP_OK) {
+        if (!rest_api_parse_u32(value, &bg_fade_out_ms) || bg_fade_out_ms > 60000U) {
+            return rest_api_send_error_json(req, "400 Bad Request", "invalid_prophecy_bg_fade_out_ms");
+        }
+        bg_fade_out_changed = true;
+    }
+    if (bg_fade_out_changed) {
+        if (config_manager_set_prophecy_background(cfg.prophecy_bg_gain_permille,
+                                                   cfg.prophecy_bg_fade_in_ms,
+                                                   bg_fade_out_ms) != ESP_OK) {
+            return rest_api_send_error_json(req, "400 Bad Request", "invalid_prophecy_bg_fade_out_ms");
+        }
+        cfg.prophecy_bg_fade_out_ms = bg_fade_out_ms;
         has_any = true;
     }
 
@@ -190,6 +237,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         cfg.ai_enabled = ai;
         cfg.web_enabled = web;
         has_any = true;
+        flags_changed = true;
     }
 
     bool persist = false;
@@ -200,11 +248,35 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     }
     if (persist) {
         (void)config_manager_save();
+        ESP_LOGI(TAG, "config save requested uri=%s", req ? req->uri : "-");
     }
 
     if (!has_any) {
         return rest_api_send_error_json(req, "400 Bad Request", "no_valid_params");
     }
+
+    ESP_LOGI(
+        TAG,
+        "config apply uri=%s changed=[brightness:%d volume:%d submode:%d aura:%d hybrid:%d hybrid_retry:%d bg_fade_out:%d flags:%d] "
+        "now[brightness=%u volume=%u submode=%s reject=%u mic_ms=%" PRIu32 " retries=%u bg_fade_out=%" PRIu32 "] save=%d",
+        req ? req->uri : "-",
+        (int)brightness_changed,
+        (int)volume_changed,
+        (int)submode_changed,
+        (int)aura_changed,
+        (int)hybrid_changed,
+        (int)hybrid_retry_changed,
+        (int)bg_fade_out_changed,
+        (int)flags_changed,
+        cfg.led_brightness,
+        cfg.audio_volume,
+        config_manager_offline_submode_to_str(cfg.offline_submode),
+        (unsigned)cfg.hybrid_reject_threshold_permille,
+        cfg.hybrid_mic_capture_ms,
+        (unsigned)cfg.hybrid_unknown_retry_max,
+        cfg.prophecy_bg_fade_out_ms,
+        (int)persist
+    );
 
     return send_config_snapshot(req);
 }

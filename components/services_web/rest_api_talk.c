@@ -17,6 +17,7 @@
 #include "freertos/task.h"
 #include "log_tags.h"
 #include "app_tasking.h"
+#include "config_manager.h"
 #include "mic_service.h"
 #include "mic_types.h"
 #include "rest_api_common.h"
@@ -30,6 +31,7 @@ static const char *TAG = LOG_TAG_REST;
 #define TALK_DEFAULT_STREAM_TIMEOUT_MS 90000U
 #define TALK_MIN_STREAM_TIMEOUT_MS 1000U
 #define TALK_MAX_STREAM_TIMEOUT_MS 180000U
+#define TALK_BG_GAIN_SWITCH_FADE_MS 250U
 #define TALK_FORM_BODY_MAX_CHARS 2304U
 #define TALK_BODY_READ_DEADLINE_MS 2500U
 #if CONFIG_HTTPD_WS_SUPPORT
@@ -49,9 +51,21 @@ static const char *TAG = LOG_TAG_REST;
 #define TALK_LIVE_FEED_TASK_STACK 6144U
 #define TALK_LIVE_FEED_TASK_PRIORITY 2U
 #define TALK_LIVE_FEED_IDLE_MS 2U
+#define TALK_LIVE_POSTFX_DECLICK_THRESHOLD 900
+#define TALK_LIVE_POSTFX_DECLICK_RAMP_SAMPLES 24U
+#define TALK_LIVE_POSTFX_DC_BETA_Q15 32604
+#define TALK_LIVE_POSTFX_LIMITER_THRESHOLD 28000
+#define TALK_LIVE_POSTFX_LIMITER_KNEE 2400
 #endif
 
 #if ORB_TALK_WS_ENABLED
+typedef struct {
+    bool has_last_sample;
+    int16_t last_sample;
+    int32_t dc_prev_x;
+    int32_t dc_prev_y;
+} talk_live_postfx_state_t;
+
 typedef struct {
     SemaphoreHandle_t lock;
     esp_timer_handle_t watchdog;
@@ -70,6 +84,7 @@ typedef struct {
     int64_t rx_diag_last_ms;
     TaskHandle_t feeder_task;
     bool feeder_stack_psram;
+    talk_live_postfx_state_t postfx;
 } talk_live_state_t;
 
 static talk_live_state_t s_live = {
@@ -90,6 +105,12 @@ static talk_live_state_t s_live = {
     .rx_diag_last_ms = 0,
     .feeder_task = NULL,
     .feeder_stack_psram = false,
+    .postfx = {
+        .has_last_sample = false,
+        .last_sample = 0,
+        .dc_prev_x = 0,
+        .dc_prev_y = 0,
+    },
 };
 #endif
 
@@ -100,6 +121,24 @@ static char s_talk_text_encoded[TALK_TEXT_ENCODED_MAX_CHARS + 1U];
 static uint32_t request_timeout_ms(void)
 {
     return (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
+}
+
+static uint16_t talk_bg_gain_for_tts(uint16_t configured_gain_permille)
+{
+    return (configured_gain_permille > 180U) ? 180U : configured_gain_permille;
+}
+
+static esp_err_t talk_start_bg_for_say(const orb_runtime_config_t *cfg)
+{
+    if (cfg == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    audio_command_t cmd = { 0 };
+    cmd.id = AUDIO_CMD_BG_SET_GAIN;
+    /* Match hybrid "answer" transition profile for spoken response. */
+    cmd.payload.bg_set_gain.fade_ms = TALK_BG_GAIN_SWITCH_FADE_MS;
+    cmd.payload.bg_set_gain.gain_permille = talk_bg_gain_for_tts(cfg->prophecy_bg_gain_permille);
+    return app_tasking_send_audio_command(&cmd, request_timeout_ms());
 }
 
 static esp_err_t talk_say_lock(void)
@@ -278,6 +317,84 @@ static esp_err_t talk_live_send_pcm_chunk(const int16_t *samples, uint16_t sampl
     return app_tasking_send_audio_command(&cmd, timeout_ms);
 }
 
+static inline int16_t talk_live_clamp_i16(int32_t v)
+{
+    if (v > 32767) {
+        return 32767;
+    }
+    if (v < -32768) {
+        return -32768;
+    }
+    return (int16_t)v;
+}
+
+static void talk_live_postfx_reset_locked(void)
+{
+    s_live.postfx.has_last_sample = false;
+    s_live.postfx.last_sample = 0;
+    s_live.postfx.dc_prev_x = 0;
+    s_live.postfx.dc_prev_y = 0;
+}
+
+static int16_t talk_live_postfx_soft_limit(int32_t x)
+{
+    int32_t ax = (x < 0) ? -x : x;
+    if (ax <= TALK_LIVE_POSTFX_LIMITER_THRESHOLD) {
+        return talk_live_clamp_i16(x);
+    }
+    int32_t over = ax - TALK_LIVE_POSTFX_LIMITER_THRESHOLD;
+    int32_t comp = TALK_LIVE_POSTFX_LIMITER_THRESHOLD;
+    comp += (int32_t)(((int64_t)over * (int64_t)TALK_LIVE_POSTFX_LIMITER_KNEE) /
+                      (int64_t)(TALK_LIVE_POSTFX_LIMITER_KNEE + over));
+    if (comp > 32767) {
+        comp = 32767;
+    }
+    return (x < 0) ? (int16_t)(-comp) : (int16_t)comp;
+}
+
+static void talk_live_postfx_apply_inplace_locked(int16_t *samples, uint32_t sample_count)
+{
+    if (samples == NULL || sample_count == 0U) {
+        return;
+    }
+
+    if (s_live.postfx.has_last_sample) {
+        int32_t first = (int32_t)samples[0];
+        int32_t prev = (int32_t)s_live.postfx.last_sample;
+        int32_t jump = first - prev;
+        if (jump < 0) {
+            jump = -jump;
+        }
+        if (jump >= TALK_LIVE_POSTFX_DECLICK_THRESHOLD) {
+            uint32_t ramp_n = sample_count;
+            if (ramp_n > TALK_LIVE_POSTFX_DECLICK_RAMP_SAMPLES) {
+                ramp_n = TALK_LIVE_POSTFX_DECLICK_RAMP_SAMPLES;
+            }
+            for (uint32_t i = 0U; i < ramp_n; ++i) {
+                int32_t target = (int32_t)samples[i];
+                int32_t mixed = prev + (int32_t)(((int64_t)(target - prev) * (int64_t)(i + 1U)) / (int64_t)ramp_n);
+                samples[i] = talk_live_clamp_i16(mixed);
+            }
+        }
+    }
+
+    int32_t prev_x = s_live.postfx.dc_prev_x;
+    int32_t prev_y = s_live.postfx.dc_prev_y;
+    for (uint32_t i = 0U; i < sample_count; ++i) {
+        int32_t x = (int32_t)samples[i];
+        int32_t y = (x - prev_x) +
+                    (int32_t)(((int64_t)TALK_LIVE_POSTFX_DC_BETA_Q15 * (int64_t)prev_y) >> 15);
+        prev_x = x;
+        prev_y = y;
+        samples[i] = talk_live_postfx_soft_limit(y);
+    }
+
+    s_live.postfx.dc_prev_x = prev_x;
+    s_live.postfx.dc_prev_y = prev_y;
+    s_live.postfx.last_sample = samples[sample_count - 1U];
+    s_live.postfx.has_last_sample = true;
+}
+
 static void talk_live_ring_reset_locked(void)
 {
     s_live.ring_write_pos = 0U;
@@ -389,6 +506,7 @@ static void talk_live_feeder_task(void *arg)
                     s_live.pcm_stream_active = false;
                     s_live.sockfd = -1;
                     talk_live_ring_reset_locked();
+                    talk_live_postfx_reset_locked();
                     talk_live_unlock();
                 }
             } else {
@@ -441,6 +559,7 @@ static void talk_live_watchdog_cb(void *arg)
         s_live.websocket_open = false;
         s_live.sockfd = -1;
         talk_live_ring_reset_locked();
+        talk_live_postfx_reset_locked();
         s_live.ring_dropped_samples = 0U;
     }
     xSemaphoreGive(s_live.lock);
@@ -488,6 +607,7 @@ static esp_err_t talk_live_init(void)
             return ESP_ERR_NO_MEM;
         }
         talk_live_ring_reset_locked();
+        talk_live_postfx_reset_locked();
         s_live.ring_dropped_samples = 0U;
     }
 
@@ -573,6 +693,7 @@ static esp_err_t talk_live_stop_if_owner(int sockfd, bool close_socket_state)
         should_stop = s_live.pcm_stream_active;
         s_live.pcm_stream_active = false;
         talk_live_ring_reset_locked();
+        talk_live_postfx_reset_locked();
         if (close_socket_state) {
             s_live.websocket_open = false;
             s_live.sockfd = -1;
@@ -606,6 +727,7 @@ static esp_err_t talk_live_mark_open(int sockfd)
     s_live.rx_samples = 0U;
     s_live.rx_diag_last_ms = 0;
     talk_live_ring_reset_locked();
+    talk_live_postfx_reset_locked();
     talk_live_unlock();
     return ESP_OK;
 }
@@ -622,7 +744,7 @@ static esp_err_t talk_live_accept_chunk_owner(int sockfd)
     return ESP_OK;
 }
 
-static esp_err_t talk_live_send_pcm_chunk_bytes(const uint8_t *data, size_t len)
+static esp_err_t talk_live_send_pcm_chunk_bytes(uint8_t *data, size_t len)
 {
     if (data == NULL || len < sizeof(int16_t)) {
         return ESP_OK;
@@ -632,29 +754,19 @@ static esp_err_t talk_live_send_pcm_chunk_bytes(const uint8_t *data, size_t len)
     if (even_len == 0) {
         return ESP_OK;
     }
-    const int16_t *in_samples = (const int16_t *)data;
+    int16_t *in_samples = (int16_t *)data;
     uint32_t sample_total = (uint32_t)(even_len / sizeof(int16_t));
-    int16_t min_v = 32767;
-    int16_t max_v = -32768;
-    uint64_t sum_abs = 0U;
-    for (uint32_t i = 0U; i < sample_total; ++i) {
-        int16_t v = in_samples[i];
-        if (v < min_v) {
-            min_v = v;
-        }
-        if (v > max_v) {
-            max_v = v;
-        }
-        int32_t iv = (int32_t)v;
-        sum_abs += (uint64_t)((iv < 0) ? -iv : iv);
-    }
-    uint32_t abs_avg = (sample_total > 0U) ? (uint32_t)(sum_abs / (uint64_t)sample_total) : 0U;
     int64_t now_ms = esp_timer_get_time() / 1000LL;
     bool emit_diag = false;
     uint32_t diag_chunks = 0U;
     uint32_t diag_samples = 0U;
+    int16_t min_v = 32767;
+    int16_t max_v = -32768;
+    uint64_t sum_abs = 0U;
+    uint32_t abs_avg = 0U;
 
     ESP_RETURN_ON_ERROR(talk_live_lock(), TAG, "live lock failed");
+    talk_live_postfx_apply_inplace_locked(in_samples, sample_total);
     uint32_t accepted = talk_live_ring_push_locked(in_samples, sample_total);
     uint32_t dropped = sample_total - accepted;
     uint32_t dropped_total = s_live.ring_dropped_samples;
@@ -666,6 +778,18 @@ static esp_err_t talk_live_send_pcm_chunk_bytes(const uint8_t *data, size_t len)
         diag_chunks = s_live.rx_chunks;
         diag_samples = s_live.rx_samples;
     }
+    for (uint32_t i = 0U; i < sample_total; ++i) {
+        int16_t v = in_samples[i];
+        if (v < min_v) {
+            min_v = v;
+        }
+        if (v > max_v) {
+            max_v = v;
+        }
+        int32_t iv = (int32_t)v;
+        sum_abs += (uint64_t)((iv < 0) ? -iv : iv);
+    }
+    abs_avg = (sample_total > 0U) ? (uint32_t)(sum_abs / (uint64_t)sample_total) : 0U;
     talk_live_unlock();
 
     if (dropped > 0U) {
@@ -783,12 +907,21 @@ static esp_err_t talk_say_handler(httpd_req_t *req)
     text[sizeof(text) - 1U] = '\0';
 
     uint32_t stream_timeout_ms = TALK_DEFAULT_STREAM_TIMEOUT_MS;
+    bool with_bg = true;
+    uint32_t bg_fade_out_ms = 0U;
     char timeout_text[16];
+    char with_bg_text[16];
     if (talk_get_param(req, s_talk_form_body, "timeout_ms", timeout_text, sizeof(timeout_text)) == ESP_OK) {
         if (!rest_api_parse_u32(timeout_text, &stream_timeout_ms) ||
             stream_timeout_ms < TALK_MIN_STREAM_TIMEOUT_MS ||
             stream_timeout_ms > TALK_MAX_STREAM_TIMEOUT_MS) {
             ret = rest_api_send_error_json(req, "400 Bad Request", "invalid_timeout_ms");
+            goto cleanup;
+        }
+    }
+    if (talk_get_param(req, s_talk_form_body, "with_bg", with_bg_text, sizeof(with_bg_text)) == ESP_OK) {
+        if (!rest_api_parse_bool_text(with_bg_text, &with_bg)) {
+            ret = rest_api_send_error_json(req, "400 Bad Request", "invalid_with_bg");
             goto cleanup;
         }
     }
@@ -810,7 +943,22 @@ static esp_err_t talk_say_handler(httpd_req_t *req)
         goto cleanup;
     }
 
-    esp_err_t err = mic_service_play_tts_text(text, stream_timeout_ms, request_timeout_ms());
+    if (with_bg) {
+        orb_runtime_config_t cfg = { 0 };
+        if (config_manager_get_snapshot(&cfg) != ESP_OK) {
+            ret = rest_api_send_error_json(req, "500 Internal Server Error", "config_read_failed");
+            goto cleanup;
+        }
+        esp_err_t bg_err = talk_start_bg_for_say(&cfg);
+        if (bg_err != ESP_OK) {
+            ESP_LOGW(TAG, "talk say bg start failed: %s", esp_err_to_name(bg_err));
+            ret = rest_api_send_error_json(req, "500 Internal Server Error", "talk_bg_start_failed");
+            goto cleanup;
+        }
+        bg_fade_out_ms = cfg.prophecy_bg_fade_out_ms;
+    }
+
+    esp_err_t err = mic_service_play_tts_text(text, stream_timeout_ms, bg_fade_out_ms, request_timeout_ms());
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "talk say failed: %s", esp_err_to_name(err));
         if (err == ESP_ERR_INVALID_SIZE) {
@@ -820,14 +968,21 @@ static esp_err_t talk_say_handler(httpd_req_t *req)
         ret = rest_api_send_error_json(req, "500 Internal Server Error", "talk_tts_failed");
         goto cleanup;
     }
-    ESP_LOGI(TAG, "talk say accepted chars=%u timeout_ms=%lu", (unsigned)strlen(text), (unsigned long)stream_timeout_ms);
+    ESP_LOGI(TAG,
+             "talk say accepted chars=%u timeout_ms=%lu with_bg=%u bg_fade_out_ms=%" PRIu32,
+             (unsigned)strlen(text),
+             (unsigned long)stream_timeout_ms,
+             with_bg ? 1U : 0U,
+             bg_fade_out_ms);
 
-    char json[96];
+    char json[136];
     (void)snprintf(json,
                    sizeof(json),
-                   "{\"ok\":true,\"chars\":%u,\"timeout_ms\":%lu}",
+                   "{\"ok\":true,\"chars\":%u,\"timeout_ms\":%lu,\"with_bg\":%s,\"bg_fade_out_ms\":%" PRIu32 "}",
                    (unsigned)strlen(text),
-                   (unsigned long)stream_timeout_ms);
+                   (unsigned long)stream_timeout_ms,
+                   with_bg ? "true" : "false",
+                   bg_fade_out_ms);
     ret = rest_api_send_json(req, "200 OK", json);
 
 cleanup:
@@ -858,7 +1013,7 @@ static esp_err_t talk_live_ws_handler(httpd_req_t *req)
             httpd_resp_set_status(req, "409 Conflict");
             return httpd_resp_sendstr(req, "talk_busy");
         }
-        ESP_LOGI(TAG, "live ws open fd=%d", sockfd);
+        ESP_LOGI(TAG, "live ws open fd=%d postfx=fast", sockfd);
         return ESP_OK;
     }
 

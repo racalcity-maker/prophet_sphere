@@ -248,6 +248,7 @@ static void stop_foreground(bool post_zero_level)
     s_sim_duration_ms = (uint32_t)CONFIG_ORB_AUDIO_SIM_PLAYBACK_MS;
     resampler_reset();
     s_pcm_stream_active = false;
+    audio_worker_pcm_stream_diag_reset();
 
     if (!s_bg.active && s_output_started && !s_output_paused) {
         (void)audio_output_i2s_pause_stream();
@@ -375,6 +376,7 @@ void audio_worker_init(void)
     s_fg_attack_total_samples = 0U;
     s_fg_attack_done_samples = 0U;
     resampler_reset();
+    audio_worker_pcm_stream_diag_reset();
     (void)memset(s_mix_buffer, 0, sizeof(s_mix_buffer));
     (void)memset(s_bg_buffer, 0, sizeof(s_bg_buffer));
     (void)memset(s_rs_out_buffer, 0, sizeof(s_rs_out_buffer));
@@ -547,10 +549,15 @@ void audio_worker_handle_command(const audio_command_t *cmd)
         s_pcm_stream_rx_chunks = 0U;
         s_pcm_stream_rx_samples = 0U;
         s_pcm_stream_chunk_written_since_poll = false;
+        audio_worker_fg_attack_reset();
+        audio_worker_pcm_stream_diag_reset();
         ESP_LOGW(TAG, "PCM stream start");
         break;
     }
-    case AUDIO_CMD_PCM_STREAM_STOP:
+    case AUDIO_CMD_PCM_STREAM_STOP: {
+        uint32_t out_jump_count = 0U;
+        uint32_t out_jump_max = 0U;
+        audio_worker_pcm_stream_diag_snapshot(&out_jump_count, &out_jump_max);
         s_pcm_stream_active = false;
         s_pcm_stream_chunk_written_since_poll = false;
         if (!s_bg.active && s_playback_state == AUDIO_PLAYBACK_IDLE && s_output_started && !s_output_paused) {
@@ -558,12 +565,17 @@ void audio_worker_handle_command(const audio_command_t *cmd)
             (void)audio_output_i2s_pause_stream();
             s_output_paused = true;
         }
+        audio_worker_pcm_stream_diag_reset();
         audio_worker_audio_level_reset(true);
         ESP_LOGW(TAG,
-                 "PCM stream stop chunks=%" PRIu32 " samples=%" PRIu32,
+                 "PCM stream stop chunks=%" PRIu32 " samples=%" PRIu32
+                 " out_jumps=%" PRIu32 " out_jump_max=%" PRIu32,
                  s_pcm_stream_rx_chunks,
-                 s_pcm_stream_rx_samples);
+                 s_pcm_stream_rx_samples,
+                 out_jump_count,
+                 out_jump_max);
         break;
+    }
     case AUDIO_CMD_PCM_STREAM_CHUNK:
         if (!s_pcm_stream_active) {
             break;
@@ -636,13 +648,19 @@ static void poll_simulated(void)
 
 static void pump_background_only(void)
 {
-    if (!s_bg.active) {
+    /* Keep output fed not only for BG, but also for active PCM stream idle gaps.
+     * Without this, no-BG streamed TTS can briefly hold/repeat last DMA fragment. */
+    if (!s_bg.active && !s_pcm_stream_active) {
         return;
     }
     esp_err_t wr_err = audio_worker_write_mixed_output(NULL, 0U, false);
     if (wr_err != ESP_OK && wr_err != ESP_ERR_TIMEOUT) {
-        ESP_LOGW(TAG, "background write failed: %s", esp_err_to_name(wr_err));
-        bg_close_with_fade_done_if_needed("write_failed");
+        if (s_bg.active) {
+            ESP_LOGW(TAG, "background write failed: %s", esp_err_to_name(wr_err));
+            bg_close_with_fade_done_if_needed("write_failed");
+        } else {
+            ESP_LOGW(TAG, "pcm idle silence write failed: %s", esp_err_to_name(wr_err));
+        }
     }
 }
 

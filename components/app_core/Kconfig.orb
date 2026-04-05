@@ -40,6 +40,14 @@ config ORB_HYBRID_MIC_CAPTURE_DEFAULT_MS
         Default microphone capture duration used by hybrid mode.
         Runtime config can override this value.
 
+config ORB_HYBRID_UNKNOWN_RETRY_MAX
+    int "Hybrid unknown retry attempts"
+    range 0 2
+    default 1
+    help
+        Number of in-session repeat attempts when speech intent is unknown/uncertain.
+        0 disables retry loop; 2 allows up to two retries.
+
 config ORB_AURA_TRACK1_ASSET_ID
     int "Aura mode track #1 asset id"
     range 1 65535

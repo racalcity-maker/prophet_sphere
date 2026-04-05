@@ -326,6 +326,10 @@ void mic_ws_client_abort(void)
     s_ws.tts_chunks_dropped = 0U;
     s_ws.tts_bytes_rx = 0U;
     s_ws.tts_frames_rx = 0U;
+    s_ws.tts_boundary_jump_count = 0U;
+    s_ws.tts_boundary_jump_max = 0U;
+    s_ws.tts_prev_sample_valid = false;
+    s_ws.tts_prev_sample = 0;
     s_ws.tts_started_tick = 0U;
     s_ws.tts_last_diag_tick = 0U;
     s_ws.tts_pcm_tail_count = 0U;
@@ -410,6 +414,10 @@ esp_err_t mic_ws_client_session_start(uint32_t capture_id, uint32_t sample_rate_
     s_ws.tts_chunk_cb_ctx = NULL;
     s_ws.tts_chunks_sent = 0U;
     s_ws.tts_chunks_dropped = 0U;
+    s_ws.tts_boundary_jump_count = 0U;
+    s_ws.tts_boundary_jump_max = 0U;
+    s_ws.tts_prev_sample_valid = false;
+    s_ws.tts_prev_sample = 0;
     portEXIT_CRITICAL(&s_lock);
 
     TickType_t deadline = xTaskGetTickCount() + ms_to_ticks_min1(CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS);
@@ -643,6 +651,10 @@ esp_err_t mic_ws_client_tts_play(const char *text,
     s_ws.tts_chunks_dropped = 0U;
     s_ws.tts_bytes_rx = 0U;
     s_ws.tts_frames_rx = 0U;
+    s_ws.tts_boundary_jump_count = 0U;
+    s_ws.tts_boundary_jump_max = 0U;
+    s_ws.tts_prev_sample_valid = false;
+    s_ws.tts_prev_sample = 0;
     s_ws.tts_started_tick = xTaskGetTickCount();
     s_ws.tts_last_diag_tick = 0U;
     s_ws.tts_pcm_tail_count = 0U;
@@ -671,6 +683,8 @@ esp_err_t mic_ws_client_tts_play(const char *text,
         uint32_t dropped = 0U;
         uint32_t bytes = 0U;
         uint32_t frames = 0U;
+        uint32_t boundary_jumps = 0U;
+        uint32_t boundary_jump_max = 0U;
         TickType_t started_tick = 0;
         portENTER_CRITICAL(&s_lock);
         done = s_ws.tts_done;
@@ -680,6 +694,8 @@ esp_err_t mic_ws_client_tts_play(const char *text,
         dropped = s_ws.tts_chunks_dropped;
         bytes = s_ws.tts_bytes_rx;
         frames = s_ws.tts_frames_rx;
+        boundary_jumps = s_ws.tts_boundary_jump_count;
+        boundary_jump_max = s_ws.tts_boundary_jump_max;
         started_tick = s_ws.tts_started_tick;
         portEXIT_CRITICAL(&s_lock);
 
@@ -708,27 +724,33 @@ esp_err_t mic_ws_client_tts_play(const char *text,
                 mic_ws_client_abort();
                 return ESP_ERR_INVALID_RESPONSE;
             }
-            ESP_LOGD(TAG,
+            ESP_LOGI(TAG,
                      "mic ws tts complete wall_ms=%" PRIu32 " audio_ms=%" PRIu32
-                     " frames=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32,
+                     " frames=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32
+                     " jumps=%" PRIu32 " jump_max=%" PRIu32,
                      wall_ms,
                      audio_ms,
                      frames,
                      sent,
-                     dropped);
+                     dropped,
+                     boundary_jumps,
+                     boundary_jump_max);
             mic_ws_client_abort();
             return ESP_OK;
         }
         if (failed || !connected) {
             ESP_LOGW(TAG,
                      "mic ws tts failed state: failed=%d connected=%d frames=%" PRIu32
-                     " bytes=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32,
+                     " bytes=%" PRIu32 " chunks_ok=%" PRIu32 " chunks_drop=%" PRIu32
+                     " jumps=%" PRIu32 " jump_max=%" PRIu32,
                      failed ? 1 : 0,
                      connected ? 1 : 0,
                      frames,
                      bytes,
                      sent,
-                     dropped);
+                     dropped,
+                     boundary_jumps,
+                     boundary_jump_max);
             mic_ws_client_abort();
             return ESP_FAIL;
         }
