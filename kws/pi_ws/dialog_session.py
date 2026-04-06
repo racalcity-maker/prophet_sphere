@@ -273,7 +273,7 @@ async def resolve_tts_text(
                 question_form=last_question_form,
                 force_polarity=last_prediction_polarity,
                 include_opening_phases=False,
-                allow_thinking_phase=True,
+                allow_thinking_phase=False,
             )
             if selected.text:
                 source = (

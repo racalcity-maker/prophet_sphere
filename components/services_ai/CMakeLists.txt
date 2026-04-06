@@ -1,10 +1,15 @@
 idf_component_register(
     SRCS
-        "ai_client.c"
-        "ai_task.c"
-        "prompt_engine.c"
+        "client/ai_client.c"
+        "task/ai_task.c"
+        "prompt/prompt_engine.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "client"
+        "task"
+        "prompt"
     REQUIRES
         app_core
         freertos

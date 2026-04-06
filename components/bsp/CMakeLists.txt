@@ -1,10 +1,14 @@
 idf_component_register(
     SRCS
-        "bsp_board.c"
-        "bsp_mode_button.c"
-        "bsp_submode_button.c"
+        "board/bsp_board.c"
+        "input/bsp_mode_button.c"
+        "input/bsp_submode_button.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "board"
+        "input"
     REQUIRES
         common
         app_core

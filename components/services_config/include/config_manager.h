@@ -28,6 +28,21 @@ esp_err_t config_manager_set_prophecy_timing(uint32_t gap12_ms, uint32_t gap23_m
 esp_err_t config_manager_set_prophecy_background(uint16_t gain_permille, uint32_t fade_in_ms, uint32_t fade_out_ms);
 esp_err_t config_manager_set_hybrid_params(uint16_t reject_threshold_permille, uint32_t mic_capture_ms);
 esp_err_t config_manager_set_hybrid_unknown_retry_max(uint8_t unknown_retry_max);
+esp_err_t config_manager_set_hybrid_effect(uint32_t idle_scene_id,
+                                           uint32_t talk_scene_id,
+                                           uint8_t speed,
+                                           uint8_t intensity,
+                                           uint8_t scale);
+esp_err_t config_manager_set_hybrid_effect_palette(uint8_t palette_mode,
+                                                   uint8_t color1_r,
+                                                   uint8_t color1_g,
+                                                   uint8_t color1_b,
+                                                   uint8_t color2_r,
+                                                   uint8_t color2_g,
+                                                   uint8_t color2_b,
+                                                   uint8_t color3_r,
+                                                   uint8_t color3_g,
+                                                   uint8_t color3_b);
 esp_err_t config_manager_set_wifi_sta_credentials(const char *ssid, const char *password);
 esp_err_t config_manager_has_persisted_wifi_sta_credentials(bool *has_credentials);
 esp_err_t config_manager_save(void);

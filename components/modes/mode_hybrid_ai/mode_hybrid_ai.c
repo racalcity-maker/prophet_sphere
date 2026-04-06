@@ -46,6 +46,25 @@ static const char *TAG = LOG_TAG_MODE_HYBRID;
 #ifndef CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX
 #define CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX 1
 #endif
+#ifndef CONFIG_ORB_HYBRID_EFFECT_IDLE_SCENE_ID
+#define CONFIG_ORB_HYBRID_EFFECT_IDLE_SCENE_ID ORB_LED_SCENE_ID_HYBRID_IDLE_SLOW_BREATHE
+#endif
+#ifndef CONFIG_ORB_HYBRID_EFFECT_TALK_SCENE_ID
+#ifdef CONFIG_ORB_HYBRID_EFFECT_SCENE_ID
+#define CONFIG_ORB_HYBRID_EFFECT_TALK_SCENE_ID CONFIG_ORB_HYBRID_EFFECT_SCENE_ID
+#else
+#define CONFIG_ORB_HYBRID_EFFECT_TALK_SCENE_ID ORB_LED_SCENE_ID_HYBRID_VORTEX
+#endif
+#endif
+#ifndef CONFIG_ORB_HYBRID_EFFECT_SPEED_DEFAULT
+#define CONFIG_ORB_HYBRID_EFFECT_SPEED_DEFAULT 170
+#endif
+#ifndef CONFIG_ORB_HYBRID_EFFECT_INTENSITY_DEFAULT
+#define CONFIG_ORB_HYBRID_EFFECT_INTENSITY_DEFAULT 180
+#endif
+#ifndef CONFIG_ORB_HYBRID_EFFECT_SCALE_DEFAULT
+#define CONFIG_ORB_HYBRID_EFFECT_SCALE_DEFAULT 140
+#endif
 
 typedef enum {
     HYBRID_FLOW_IDLE = 0,
@@ -63,6 +82,11 @@ typedef struct {
     uint32_t bg_fade_out_ms;
     uint16_t bg_gain_permille;
     uint8_t unknown_retry_max;
+    uint32_t effect_idle_scene_id;
+    uint32_t effect_talk_scene_id;
+    uint8_t effect_speed;
+    uint8_t effect_intensity;
+    uint8_t effect_scale;
 } hybrid_runtime_cfg_t;
 
 static hybrid_flow_t s_flow = HYBRID_FLOW_IDLE;
@@ -72,6 +96,11 @@ static hybrid_runtime_cfg_t s_runtime = {
     .bg_fade_out_ms = (uint32_t)CONFIG_ORB_AUDIO_PROPHECY_BG_FADE_OUT_MS,
     .bg_gain_permille = (uint16_t)CONFIG_ORB_AUDIO_PROPHECY_BG_GAIN_PERMILLE,
     .unknown_retry_max = (uint8_t)CONFIG_ORB_HYBRID_UNKNOWN_RETRY_MAX,
+    .effect_idle_scene_id = (uint32_t)CONFIG_ORB_HYBRID_EFFECT_IDLE_SCENE_ID,
+    .effect_talk_scene_id = (uint32_t)CONFIG_ORB_HYBRID_EFFECT_TALK_SCENE_ID,
+    .effect_speed = (uint8_t)CONFIG_ORB_HYBRID_EFFECT_SPEED_DEFAULT,
+    .effect_intensity = (uint8_t)CONFIG_ORB_HYBRID_EFFECT_INTENSITY_DEFAULT,
+    .effect_scale = (uint8_t)CONFIG_ORB_HYBRID_EFFECT_SCALE_DEFAULT,
 };
 static uint32_t s_expected_fail_asset = 0U;
 static uint32_t s_active_capture_id = 0U;
@@ -86,6 +115,60 @@ static uint8_t unknown_retry_limit(void)
         v = 2U;
     }
     return (uint8_t)v;
+}
+
+static uint32_t hybrid_effect_scene_normalize(uint32_t scene_id, uint32_t fallback_scene_id)
+{
+    switch (scene_id) {
+    case ORB_LED_SCENE_ID_HYBRID_IDLE_SLOW_BREATHE:
+    case ORB_LED_SCENE_ID_HYBRID_TOUCH_FAST_BREATHE:
+    case ORB_LED_SCENE_ID_HYBRID_VORTEX:
+    case ORB_LED_SCENE_ID_HYBRID_VORTEX_DIM:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_METABALLS:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_DNA:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_TWISTER:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_CHECKER_PULSE:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_RAIN:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_RADIAL_BURST:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_TUNNEL:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_BANDS:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_STARFIELD:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_CONFETTI:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_LAVA:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_RINGS:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_NOISE:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_SCANNER:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_ZIGZAG:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_AURORA:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_PRISM:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_CLOUDS:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_WAVEGRID:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_HEARTBEAT:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_PINWHEEL:
+    case ORB_LED_SCENE_ID_HYBRID_WLED_COMET:
+        return scene_id;
+    default:
+        return fallback_scene_id;
+    }
+}
+
+static uint32_t hybrid_effect_scene_speak(void)
+{
+    return hybrid_effect_scene_normalize(s_runtime.effect_talk_scene_id, HYBRID_SCENE_VORTEX_ID);
+}
+
+static uint32_t hybrid_effect_scene_idle(void)
+{
+    return hybrid_effect_scene_normalize(s_runtime.effect_idle_scene_id, HYBRID_SCENE_IDLE_ID);
+}
+
+static uint32_t hybrid_effect_scene_listen(void)
+{
+    uint32_t speak_scene = hybrid_effect_scene_speak();
+    if (speak_scene == ORB_LED_SCENE_ID_HYBRID_VORTEX) {
+        return ORB_LED_SCENE_ID_HYBRID_VORTEX_DIM;
+    }
+    return speak_scene;
 }
 
 static bool intent_is_unknown_like(uint8_t intent_id)
@@ -124,6 +207,11 @@ static void load_runtime_cfg(void)
     s_runtime.unknown_retry_max = (runtime.hybrid_unknown_retry_max <= 2U)
                                       ? runtime.hybrid_unknown_retry_max
                                       : 2U;
+    s_runtime.effect_idle_scene_id = hybrid_effect_scene_normalize(runtime.hybrid_effect_idle_scene_id, HYBRID_SCENE_IDLE_ID);
+    s_runtime.effect_talk_scene_id = hybrid_effect_scene_normalize(runtime.hybrid_effect_talk_scene_id, HYBRID_SCENE_VORTEX_ID);
+    s_runtime.effect_speed = runtime.hybrid_effect_speed;
+    s_runtime.effect_intensity = runtime.hybrid_effect_intensity;
+    s_runtime.effect_scale = runtime.hybrid_effect_scale;
     (void)runtime.hybrid_mic_capture_ms;
     /* Hybrid remote flow uses fixed 8s listen window. */
     s_runtime.mic_capture_ms = HYBRID_MIC_CAPTURE_MS_DEFAULT;
@@ -140,16 +228,16 @@ static uint32_t scene_for_flow(hybrid_flow_t flow)
 {
     switch (flow) {
     case HYBRID_FLOW_WAIT_MIC_DONE:
-        return HYBRID_SCENE_VORTEX_LISTEN_ID;
+        return hybrid_effect_scene_listen();
     case HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE:
     case HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE:
     case HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE:
     case HYBRID_FLOW_WAIT_FAIL_PROMPT_DONE:
     case HYBRID_FLOW_WAIT_BG_FADE_OUT:
-        return HYBRID_SCENE_VORTEX_ID;
+        return hybrid_effect_scene_speak();
     case HYBRID_FLOW_IDLE:
     default:
-        return HYBRID_SCENE_IDLE_ID;
+        return hybrid_effect_scene_idle();
     }
 }
 
@@ -301,12 +389,14 @@ static const char *event_name(app_mode_event_id_t id)
 
 static esp_err_t mode_init(void)
 {
+    load_runtime_cfg();
     reset_flow();
     return ESP_OK;
 }
 
 static esp_err_t mode_enter(void)
 {
+    load_runtime_cfg();
     reset_flow();
     return ESP_OK;
 }
@@ -345,7 +435,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
     case APP_MODE_EVENT_TOUCH_UP:
         if (s_flow == HYBRID_FLOW_IDLE) {
             action->id = APP_MODE_ACTION_LED_SET_SCENE;
-            action->led.scene_id = HYBRID_SCENE_IDLE_ID;
+            action->led.scene_id = hybrid_effect_scene_idle();
         }
         break;
 
@@ -357,7 +447,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
         s_active_capture_id = next_capture_id();
         s_expected_fail_asset = HYBRID_FAIL_ASSET_ID;
         action->id = APP_MODE_ACTION_MIC_TTS_PLAY_TEXT;
-        action->led.scene_id = HYBRID_SCENE_VORTEX_ID;
+        action->led.scene_id = hybrid_effect_scene_speak();
         action->bg.fade_ms = s_runtime.bg_fade_in_ms;
         action->bg.gain_permille = (s_runtime.bg_gain_permille > HYBRID_TTS_BG_GAIN_MAX_PERMILLE)
                                        ? HYBRID_TTS_BG_GAIN_MAX_PERMILLE
@@ -375,7 +465,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
     case APP_MODE_EVENT_AUDIO_DONE:
         if (s_flow == HYBRID_FLOW_WAIT_BG_FADE_OUT && event_is_bg_fade_done(event)) {
             action->id = APP_MODE_ACTION_RETURN_IDLE;
-            action->led.scene_id = HYBRID_SCENE_IDLE_ID;
+            action->led.scene_id = hybrid_effect_scene_idle();
             reset_flow();
             ESP_LOGW(TAG, "bg fade complete -> idle");
             break;
@@ -397,7 +487,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
         if (intent_is_unknown_like(event->intent_id) && s_unknown_retry_count < unknown_retry_limit()) {
             s_unknown_retry_count++;
             action->id = APP_MODE_ACTION_MIC_TTS_PLAY_TEXT;
-            action->led.scene_id = HYBRID_SCENE_VORTEX_ID;
+            action->led.scene_id = hybrid_effect_scene_speak();
             action->led.fade_ms = HYBRID_INTENT_COLOR_RAMP_MS;
             resolve_intent_color(event->intent_id, &action->led.color_r, &action->led.color_g, &action->led.color_b);
             action->mic.tts_timeout_ms = HYBRID_REMOTE_TTS_TIMEOUT_MS;
@@ -417,7 +507,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
             break;
         }
         action->id = APP_MODE_ACTION_MIC_TTS_PLAY_TEXT;
-        action->led.scene_id = HYBRID_SCENE_VORTEX_ID;
+        action->led.scene_id = hybrid_effect_scene_speak();
         action->led.fade_ms = HYBRID_INTENT_COLOR_RAMP_MS;
         resolve_intent_color(event->intent_id, &action->led.color_r, &action->led.color_g, &action->led.color_b);
         action->mic.tts_timeout_ms = HYBRID_REMOTE_TTS_TIMEOUT_MS;
@@ -447,7 +537,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
                 break;
             }
             action->id = APP_MODE_ACTION_MIC_START_CAPTURE;
-            action->led.scene_id = HYBRID_SCENE_VORTEX_LISTEN_ID;
+            action->led.scene_id = hybrid_effect_scene_listen();
             action->mic.capture_id = s_active_capture_id;
             action->mic.capture_ms = s_runtime.mic_capture_ms;
             action->bg.fade_ms = HYBRID_BG_GAIN_SWITCH_FADE_MS;
@@ -469,7 +559,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
             }
             s_active_capture_id = next_capture_id();
             action->id = APP_MODE_ACTION_MIC_START_CAPTURE;
-            action->led.scene_id = HYBRID_SCENE_VORTEX_LISTEN_ID;
+            action->led.scene_id = hybrid_effect_scene_listen();
             action->mic.capture_id = s_active_capture_id;
             action->mic.capture_ms = s_runtime.mic_capture_ms;
             action->bg.fade_ms = HYBRID_BG_GAIN_SWITCH_FADE_MS;
@@ -535,12 +625,27 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
         break;
 
     case APP_MODE_EVENT_MIC_TTS_STREAM_STARTED:
-        if ((s_flow != HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE &&
-             s_flow != HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE &&
-             s_flow != HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE) ||
-            s_remote_stream_started ||
-            ((event->value != 0U) && (event->value != s_active_capture_id))) {
+    {
+        bool waiting_remote_tts = (s_flow == HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE ||
+                                   s_flow == HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE ||
+                                   s_flow == HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE);
+        bool capture_matches = ((event->value == 0U) || (event->value == s_active_capture_id));
+        if (!waiting_remote_tts || s_remote_stream_started) {
             break;
+        }
+        /* For intro/retry prompts capture_id can be stale/non-correlated. For answer stage keep strict match. */
+        if (s_flow == HYBRID_FLOW_WAIT_REMOTE_ANSWER_TTS_DONE && !capture_matches) {
+            break;
+        }
+        if ((s_flow == HYBRID_FLOW_WAIT_REMOTE_INTRO_TTS_DONE ||
+             s_flow == HYBRID_FLOW_WAIT_REMOTE_RETRY_TTS_DONE) &&
+            !capture_matches) {
+            ESP_LOGW(TAG,
+                     "remote stream started with non-matching capture id=%" PRIu32
+                     " (expected=%" PRIu32 ", flow=%s) -> accept",
+                     event->value,
+                     s_active_capture_id,
+                     flow_name(s_flow));
         }
         s_remote_stream_started = true;
         action->id = APP_MODE_ACTION_HYBRID_WS_TIMER_START;
@@ -553,6 +658,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
                  action->mic.ws_timeout_ms,
                  flow_name(s_flow));
         break;
+    }
 
     case APP_MODE_EVENT_MIC_REMOTE_PLAN_ERROR:
         /* Informational only in remote-only flow. */
@@ -571,7 +677,7 @@ static esp_err_t mode_handle_event(const app_mode_event_t *event, app_mode_actio
                 ESP_LOGW(TAG, "flow error -> bg fade-out");
             } else {
                 action->id = APP_MODE_ACTION_RETURN_IDLE;
-                action->led.scene_id = HYBRID_SCENE_IDLE_ID;
+                action->led.scene_id = hybrid_effect_scene_idle();
                 reset_flow();
                 ESP_LOGW(TAG, "flow error -> idle");
             }

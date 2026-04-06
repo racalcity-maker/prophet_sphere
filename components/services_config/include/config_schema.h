@@ -18,6 +18,12 @@ typedef enum {
     ORB_OFFLINE_SUBMODE_PROPHECY = 2,
 } orb_offline_submode_t;
 
+typedef enum {
+    ORB_LED_PALETTE_MODE_RAINBOW = 0,
+    ORB_LED_PALETTE_MODE_DUO = 1,
+    ORB_LED_PALETTE_MODE_TRIO = 2,
+} orb_led_palette_mode_t;
+
 typedef struct {
     uint8_t led_brightness;
     uint8_t audio_volume;
@@ -29,13 +35,27 @@ typedef struct {
     uint32_t offline_lottery_start_seq;
     uint32_t aura_gap_ms;
     uint32_t hybrid_mic_capture_ms;
+    uint32_t hybrid_effect_idle_scene_id;
+    uint32_t hybrid_effect_talk_scene_id;
     uint32_t prophecy_gap12_ms;
     uint32_t prophecy_gap23_ms;
     uint32_t prophecy_gap34_ms;
     uint32_t prophecy_leadin_wait_ms;
     uint16_t hybrid_reject_threshold_permille;
     uint8_t hybrid_unknown_retry_max;
-    uint8_t reserved0;
+    uint8_t hybrid_effect_speed;
+    uint8_t hybrid_effect_intensity;
+    uint8_t hybrid_effect_scale;
+    uint8_t hybrid_effect_palette_mode;
+    uint8_t hybrid_effect_color1_r;
+    uint8_t hybrid_effect_color1_g;
+    uint8_t hybrid_effect_color1_b;
+    uint8_t hybrid_effect_color2_r;
+    uint8_t hybrid_effect_color2_g;
+    uint8_t hybrid_effect_color2_b;
+    uint8_t hybrid_effect_color3_r;
+    uint8_t hybrid_effect_color3_g;
+    uint8_t hybrid_effect_color3_b;
     uint16_t prophecy_bg_gain_permille;
     uint32_t prophecy_bg_fade_in_ms;
     uint32_t prophecy_bg_fade_out_ms;

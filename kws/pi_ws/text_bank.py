@@ -16,7 +16,7 @@ _HEADER_POS_RE = re.compile(r"^\s*Положительн", re.IGNORECASE)
 _HEADER_NEG_RE = re.compile(r"^\s*Отрицательн", re.IGNORECASE)
 _HEADER_NEU_RE = re.compile(r"^\s*Нейтральн", re.IGNORECASE)
 
-_HEADER_SERVICE_RE = re.compile(r"^\s*(INTRO|RETRY|FAIL|JOKE|FORBIDDEN)\b", re.IGNORECASE)
+_HEADER_SERVICE_RE = re.compile(r"^\s*(INTRO|RETRY|FAIL|BUSY|BRIDGE|JOKE|FORBIDDEN)\b", re.IGNORECASE)
 _HEADER_DOMAIN_RE = re.compile(r"^\s*Домен\s*[:,]", re.IGNORECASE)
 
 _YES_NO_HINT_RE = re.compile(
@@ -68,9 +68,11 @@ _DOMAIN_ALIASES = {
     "path": "future",
     "past": "future",
     "luck": "future",
-    "yes_no": "future",
-    "warning": "danger",
-    "self": "inner_state",
+    "yes_no": "general",
+    "danger": "warning",
+    "inner_state": "self",
+    "unknown": "general",
+    "uncertain": "general",
 }
 
 
@@ -421,6 +423,8 @@ class OracleTextBank:
             "intro": [],
             "retry": [],
             "fail": [],
+            "busy": [],
+            "bridge": [],
             "joke": [],
             "forbidden": [],
             "thinking": [],
@@ -486,6 +490,8 @@ class OracleTextBank:
             "intro": [],
             "retry": [],
             "fail": [],
+            "busy": [],
+            "bridge": [],
             "joke": [],
             "forbidden": [],
             "thinking": [],
@@ -541,8 +547,15 @@ class OracleTextBank:
 
         if service_dir.exists():
             _extend_unique(services["fail"], _load_json_list(service_dir / "errors.json"))
-            _extend_unique(services["fail"], _load_json_list(service_dir / "fallback.json"))
-            _extend_unique(services["retry"], _load_json_list(service_dir / "busy.json"))
+            fallback_sections = _load_json_map(service_dir / "fallback.json")
+            if fallback_sections:
+                _extend_unique(services["fail"], fallback_sections.get("soft_recover", []))
+                _extend_unique(services["fail"], fallback_sections.get("hard_recover", []))
+                _extend_unique(services["retry"], fallback_sections.get("reprompt_shorter", []))
+            else:
+                _extend_unique(services["fail"], _load_json_list(service_dir / "fallback.json"))
+
+            _extend_unique(services["busy"], _load_json_list(service_dir / "busy.json"))
             status_sections = _load_json_map(service_dir / "system_status.json")
             _extend_unique(services["intro"], status_sections.get("listening", []))
             _extend_unique(services["thinking"], status_sections.get("thinking", []))
@@ -553,7 +566,7 @@ class OracleTextBank:
 
         if bridge_dir.exists():
             for bridge_file in sorted(bridge_dir.glob("*.json")):
-                _extend_unique(global_understanding, _load_json_list(bridge_file))
+                _extend_unique(services["bridge"], _load_json_list(bridge_file))
 
         if closure_dir.exists():
             for closure_file in sorted(closure_dir.glob("*.json")):
@@ -675,6 +688,8 @@ class OracleTextBank:
             "intro": [],
             "retry": [],
             "fail": [],
+            "busy": [],
+            "bridge": [],
             "joke": [],
             "forbidden": [],
         }
@@ -764,7 +779,7 @@ class OracleTextBank:
         candidates = [key]
         if key in _DOMAIN_ALIASES:
             candidates.append(_DOMAIN_ALIASES[key])
-        candidates.extend(["future", "love", "choice"])
+        candidates.extend(["general", "future", "love", "choice"])
 
         for name in candidates:
             data = self.domains.get(name)
@@ -885,15 +900,11 @@ class OracleTextBank:
                 phases={"forbidden": text},
             )
         if normalized_intent in ("unknown", "uncertain"):
-            text = self._pick_service("fail", fallback="Сегодня ответ скрыт. Приходи позже.")
-            return ScriptSelection(
-                text=text,
-                domain="service_fail",
-                subintent="",
-                question_form="open",
-                prediction_bucket="service",
-                phases={"fail": text},
-            )
+            # For unclear user questions prefer a meaningful reprompt in general domain,
+            # instead of a hard service-fail line.
+            normalized_intent = "general"
+            if not subintent:
+                subintent = "unclear_question"
 
         domain_name, domain = self._resolve_domain(normalized_intent)
         selected_subintent = _norm_token(subintent)
@@ -925,8 +936,6 @@ class OracleTextBank:
 
         if form == "yes_no":
             polarity = _norm_token(force_polarity)
-            if polarity not in ("positive", "negative"):
-                polarity = "positive" if self._picker.choose_bool() else "negative"
             if polarity == "positive" and active_domain.prediction_positive:
                 pred_pool = active_domain.prediction_positive
                 bucket = "positive"
@@ -946,32 +955,52 @@ class OracleTextBank:
             prediction = self._pick_service("fail", fallback="Сейчас знаки молчат")
             bucket = "service_fallback"
 
+        bridge = ""
+        bridge_pool = self.services.get("bridge", [])
+        if bridge_pool:
+            candidate = self._picker.pick(f"{domain_name}:bridge", bridge_pool)
+            if candidate and not _phrases_redundant(candidate, prediction):
+                bridge = candidate
+
+        lead_in = bridge
         thinking = ""
-        if allow_thinking_phase:
+        if allow_thinking_phase and not lead_in and form == "open":
             think_pool = self.services.get("thinking", [])
-            if not think_pool:
-                think_pool = self.services.get("retry", [])
-            if think_pool and self._picker.choose_bool():
+            if think_pool:
                 candidate = self._picker.pick(f"{domain_name}:thinking", think_pool)
                 if candidate and not _phrases_redundant(candidate, prediction):
                     thinking = candidate
+                    lead_in = candidate
 
         farewell = self._picker.pick(f"{domain_name}:farewell", active_domain.farewell)
         if not farewell:
             farewell = self._pick_service("fail", fallback="На сегодня всё")
-        if _phrases_redundant(prediction, farewell) or (thinking and _phrases_redundant(thinking, farewell)):
+        if (
+            _phrases_redundant(prediction, farewell)
+            or (lead_in and _phrases_redundant(lead_in, farewell))
+            or (thinking and _phrases_redundant(thinking, farewell))
+        ):
+            farewell = ""
+        # Enforce deterministic phase rules:
+        # open   -> lead_in -> prediction -> closure
+        # yes_no -> lead_in -> prediction (+closure only for neutral/uncertain buckets)
+        if farewell and form == "yes_no" and bucket in ("positive", "negative"):
             farewell = ""
 
         phases = {
             "greeting": greeting,
             "understanding": understanding,
+            "bridge": bridge,
             "thinking": thinking,
             "prediction": prediction,
             "farewell": farewell,
         }
-        ordered_parts = [prediction, farewell]
-        if thinking:
-            ordered_parts = [thinking, prediction, farewell]
+        ordered_parts: List[str] = []
+        if lead_in:
+            ordered_parts.append(lead_in)
+        ordered_parts.append(prediction)
+        if farewell:
+            ordered_parts.append(farewell)
         if include_opening_phases:
             ordered_parts = [greeting, understanding] + ordered_parts
         text = "\n".join([part for part in ordered_parts if part]).strip()
@@ -983,4 +1012,5 @@ class OracleTextBank:
             prediction_bucket=bucket,
             phases=phases,
         )
+
 

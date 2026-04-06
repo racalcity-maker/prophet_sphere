@@ -1,19 +1,26 @@
 idf_component_register(
     SRCS
-        "mic_service.c"
-        "mic_task.c"
-        "mic_task_events.c"
-        "mic_task_capture_ws.c"
-        "mic_task_flow.c"
-        "mic_task_tts_pipeline.c"
-        "mic_task_loopback.c"
-        "mic_ws_client.c"
-        "mic_ws_tts_stream.c"
-        "mic_ws_protocol.c"
-        "mic_ws_transport.c"
-        "mic_i2s_hal.c"
+        "service/mic_service.c"
+        "task/mic_task.c"
+        "task/mic_task_events.c"
+        "task/mic_task_capture_ws.c"
+        "task/mic_task_flow.c"
+        "task/mic_task_tts_pipeline.c"
+        "task/mic_task_loopback.c"
+        "ws/mic_ws_client.c"
+        "ws/mic_ws_client_kws.c"
+        "ws/mic_ws_client_tts.c"
+        "ws/mic_ws_tts_stream.c"
+        "ws/mic_ws_protocol.c"
+        "ws/mic_ws_transport.c"
+        "hal/mic_i2s_hal.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "service"
+        "task"
+        "ws"
+        "hal"
     REQUIRES
         app_core
         freertos

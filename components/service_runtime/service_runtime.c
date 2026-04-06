@@ -244,9 +244,18 @@ static network_profile_t mode_network_profile(orb_mode_t mode)
     (void)mode;
     return NETWORK_PROFILE_NONE;
 #else
+    network_status_t network_status = { 0 };
+    const bool has_network_status = (network_manager_get_status(&network_status) == ESP_OK);
+    const bool sta_link_is_up = has_network_status && network_status.network_up &&
+                                (network_status.active_profile == NETWORK_PROFILE_STA ||
+                                 network_status.active_profile == NETWORK_PROFILE_APSTA);
+
     switch (mode) {
     case ORB_MODE_OFFLINE_SCRIPTED:
 #if CONFIG_ORB_NETWORK_OFFLINE_USE_SOFTAP
+        if (sta_link_is_up) {
+            return NETWORK_PROFILE_STA;
+        }
         return NETWORK_PROFILE_SOFTAP;
 #else
         return NETWORK_PROFILE_NONE;

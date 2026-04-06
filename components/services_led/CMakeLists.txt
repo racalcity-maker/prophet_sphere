@@ -1,18 +1,35 @@
 idf_component_register(
     SRCS
-        "led_service.c"
-        "led_task.c"
-        "led_effects.c"
-        "led_scene_registry.c"
-        "led_strip_encoder.c"
-        "led_output_ws2812.c"
-        "led_power_limit.c"
+        "service/led_service.c"
+        "task/led_task.c"
+        "task/led_task_flow.c"
+        "task/led_task_render.c"
+        "effects/led_effects.c"
+        "effects/led_effects_state.c"
+        "effects/led_effects_classic.c"
+        "effects/led_effects_hybrid_core.c"
+        "effects/led_effects_hybrid_wled.c"
+        "effects/led_effect_matrix_wled_metaballs.c"
+        "effects/led_effect_matrix_wled_dna.c"
+        "effects/led_effect_matrix_wled_extra.c"
+        "effects/led_scene_registry.c"
+        "output/led_strip_encoder.c"
+        "output/led_output_ws2812.c"
+        "power/led_power_limit.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "service"
+        "task"
+        "effects"
+        "output"
+        "power"
     REQUIRES
         app_core
         freertos
         common
+        services_config
         bsp
         esp_driver_rmt
 )

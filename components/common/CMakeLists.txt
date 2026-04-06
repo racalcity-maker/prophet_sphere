@@ -1,9 +1,13 @@
 idf_component_register(
     SRCS
-        "memory_monitor.c"
-        "orb_intents.c"
+        "monitor/memory_monitor.c"
+        "intents/orb_intents.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "monitor"
+        "intents"
     REQUIRES
         esp_timer
 )

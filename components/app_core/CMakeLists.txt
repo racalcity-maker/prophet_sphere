@@ -1,22 +1,27 @@
 idf_component_register(
     SRCS
-        "app_events.c"
-        "service_lifecycle_guard.c"
-        "app_control_task.c"
-        "app_tasking.c"
-        "app_fsm.c"
-        "mode_manager.c"
-        "mode_action_executor.c"
-        "mode_action_executor_audio.c"
-        "mode_action_executor_mic.c"
-        "mode_action_executor_session.c"
-        "mode_timers.c"
-        "control_dispatch.c"
-        "submode_controller.c"
-        "session_controller.c"
-        "interaction_sequence.c"
+        "runtime/app_events.c"
+        "runtime/service_lifecycle_guard.c"
+        "runtime/app_control_task.c"
+        "runtime/app_tasking.c"
+        "mode/app_fsm.c"
+        "mode/mode_manager.c"
+        "mode/mode_action_executor.c"
+        "mode/mode_action_executor_audio.c"
+        "mode/mode_action_executor_mic.c"
+        "mode/mode_action_executor_session.c"
+        "mode/mode_timers.c"
+        "mode/submode_controller.c"
+        "mode/session_controller.c"
+        "mode/interaction_sequence.c"
+        "dispatch/control_dispatch.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "runtime"
+        "mode"
+        "dispatch"
     REQUIRES
         freertos
         common

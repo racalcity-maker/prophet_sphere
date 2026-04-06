@@ -1,14 +1,19 @@
 idf_component_register(
     SRCS
-        "network_manager.c"
-        "network_manager_state.c"
-        "network_manager_profile.c"
-        "network_manager_events.c"
-        "network_manager_wifi.c"
-        "network_policy.c"
-        "network_event_handlers.c"
+        "manager/network_manager.c"
+        "manager/network_manager_state.c"
+        "manager/network_manager_profile.c"
+        "manager/network_manager_wifi.c"
+        "events/network_manager_events.c"
+        "events/network_event_handlers.c"
+        "policy/network_policy.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "manager"
+        "events"
+        "policy"
     REQUIRES
         app_core
         common

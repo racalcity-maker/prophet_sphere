@@ -1,9 +1,13 @@
 idf_component_register(
     SRCS
-        "storage_manager.c"
-        "content_index.c"
+        "manager/storage_manager.c"
+        "index/content_index.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "manager"
+        "index"
     REQUIRES
         common
         freertos

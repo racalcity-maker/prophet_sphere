@@ -27,6 +27,8 @@ typedef enum {
     LED_CMD_PLAY_SCENE,
     LED_CMD_STOP,
     LED_CMD_SET_BRIGHTNESS,
+    LED_CMD_SET_EFFECT_PARAMS,
+    LED_CMD_SET_EFFECT_PALETTE,
     LED_CMD_TOUCH_ZONE_SET,
     LED_CMD_TOUCH_OVERLAY_CLEAR,
     LED_CMD_SET_AURA_COLOR,
@@ -44,6 +46,25 @@ typedef struct {
         struct {
             uint8_t brightness;
         } set_brightness;
+        struct {
+            uint8_t speed;
+            uint8_t intensity;
+            uint8_t scale;
+            uint8_t reserved;
+        } set_effect_params;
+        struct {
+            uint8_t mode;
+            uint8_t c1_r;
+            uint8_t c1_g;
+            uint8_t c1_b;
+            uint8_t c2_r;
+            uint8_t c2_g;
+            uint8_t c2_b;
+            uint8_t c3_r;
+            uint8_t c3_g;
+            uint8_t c3_b;
+            uint8_t reserved[2];
+        } set_effect_palette;
         struct {
             uint8_t zone_id;
             uint8_t pressed;

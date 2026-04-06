@@ -1,10 +1,15 @@
 idf_component_register(
     SRCS
-        "config_defaults.c"
-        "config_store_nvs.c"
-        "config_manager.c"
+        "defaults/config_defaults.c"
+        "store/config_store_nvs.c"
+        "manager/config_manager.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "defaults"
+        "store"
+        "manager"
     REQUIRES
         freertos
         common

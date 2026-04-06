@@ -62,6 +62,14 @@ It provides a safe FreeRTOS ownership and queue architecture first, with hardwar
   `audio_worker.c` (orchestration/dispatch), `audio_worker_mixer.c` (FG+BG mix/write),
   `audio_worker_bg.c` (background WAV lifecycle/fade), `audio_worker_reactive.c` (audio-level event bridge).
 - LED scene/effect rendering logic is separated into `services_led/led_effects.c`.
+- LED stack is decomposed by responsibility:
+  - `services_led/effects/led_effects.c`: thin scene dispatcher
+  - `services_led/effects/led_effects_classic.c`: classic effects
+  - `services_led/effects/led_effects_hybrid_core.c`: hybrid native effects
+  - `services_led/effects/led_effects_hybrid_wled.c`: hybrid WLED-matrix variants
+  - `services_led/task/led_task.c`: orchestration loop/start-stop only
+  - `services_led/task/led_task_flow.c`: command/state-flow handling
+  - `services_led/task/led_task_render.c`: framebuffer/palette/overlay/render post-processing
 - Backend adapters stay in dedicated files (for example `audio_output_i2s.c`).
 - Config defaults are separated from runtime config API (`config_defaults.c` vs `config_manager.c`).
 - `app_core` keeps queue/event/FSM/mode/session separation, with `app_control_task` bootstrap split from queue setup.
@@ -108,7 +116,7 @@ Board submode button (active-low to GND):
 - `Board Configuration -> Submode Button Configuration -> Task stack / priority`
 - Press action is mode-specific:
   - `offline_scripted`: cycles offline submodes `aura -> lottery -> prophecy -> aura`
-  - `hybrid_ai`: cycles LED scene `plasma <-> sparkle`
+  - `hybrid_ai`: submode button action is ignored (hybrid scene is owned by hybrid runtime flow)
   - `installation_slave`: cycles LED scene `color_wave <-> idle_breathe`
 
 Offline submode at startup:
@@ -224,6 +232,10 @@ Current web layer is mode-first and functional:
   Hybrid runtime fields exposed there:
   `hybrid_mic_capture_ms`, `hybrid_reject_threshold_permille`,
   `hybrid_unknown_retry_max (0..2)`, `prophecy_bg_fade_out_ms`.
+  Also persisted and exposed:
+  `hybrid_effect_idle_scene_id`, `hybrid_effect_talk_scene_id`,
+  `hybrid_effect_speed`, `hybrid_effect_intensity`, `hybrid_effect_scale`,
+  `hybrid_effect_palette_mode`, `hybrid_effect_color1_*`, `hybrid_effect_color2_*`, `hybrid_effect_color3_*`.
 
 Hybrid page runtime controls:
 - Talk tab:
@@ -257,6 +269,14 @@ The first end-to-end control-flow slice is now wired for validation:
 Expected serial log markers:
 - `mode changed to offline_scripted`
 - `touch calibration complete`
+
+## Runtime Notes (Recent)
+- Hybrid idle scene on mode entry/switch is taken from saved runtime config (`hybrid_effect_idle_scene_id`), not hardcoded.
+- `mode_hybrid_ai` reloads effect runtime config on `init/enter`, so saved hybrid effect selections survive reboot/mode transitions.
+- `mic_task` stack pressure during loopback was reduced:
+  - large per-iteration buffers moved off stack in loopback pipeline
+  - read sample buffer moved to static storage
+  - effective `mic_task` stack now has a safe lower bound (`>= 8192`) even if menuconfig value is lower.
 - `TOUCH_DOWN zone=...`
 - `aura hold -> start sequence`
 - `audio sequence started first=... second=... gap=...`

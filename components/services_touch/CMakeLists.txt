@@ -1,9 +1,13 @@
 idf_component_register(
     SRCS
-        "touch_service.c"
-        "touch_task.c"
+        "service/touch_service.c"
+        "task/touch_task.c"
     INCLUDE_DIRS
         "include"
+    PRIV_INCLUDE_DIRS
+        "."
+        "service"
+        "task"
     REQUIRES
         app_core
         freertos

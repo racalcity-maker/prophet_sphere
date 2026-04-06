@@ -32,6 +32,7 @@
             <button class="tab-btn active" data-mode-tab="home">Home</button>
             <button class="tab-btn" data-mode-tab="talk">Talk</button>
             <button class="tab-btn" data-mode-tab="settings">Settings</button>
+            <button id="mode-effects-tab-btn" class="tab-btn" data-mode-tab="effects">Effects</button>
         </div>
     </section>
 
@@ -281,7 +282,111 @@
             <span class="muted">Server status: <strong id="server-tts-status">-</strong></span>
         </div>
     </section>
+
+    <section class="card mode-panel" data-mode-panel="effects" id="mode-effects-panel">
+        <h3>Effects</h3>
+        <p class="muted">Select target state (idle/talk), then tune and apply effect for that state only.</p>
+        <div class="grid-two">
+            <label>Target State
+                <select id="mode-hybrid-effect-target">
+                    <option value="idle">idle</option>
+                    <option value="talk">talk</option>
+                </select>
+            </label>
+            <label>Effect
+                <select id="mode-hybrid-effect-scene">
+                    <option value="12">Hybrid Idle Slow Breathe</option>
+                    <option value="13">Hybrid Touch Fast Breathe</option>
+                    <option value="14">Hybrid Vortex</option>
+                    <option value="15">Hybrid Vortex Dim</option>
+                    <option value="16">WLED Metaballs</option>
+                    <option value="17">WLED DNA</option>
+                    <option value="18">WLED Twister</option>
+                    <option value="19">WLED Checker Pulse</option>
+                    <option value="20">WLED Rain</option>
+                    <option value="21">WLED Radial Burst</option>
+                    <option value="22">WLED Tunnel</option>
+                    <option value="23">WLED Bands</option>
+                    <option value="24">WLED Starfield</option>
+                    <option value="25">WLED Confetti</option>
+                    <option value="26">WLED Lava</option>
+                    <option value="27">WLED Rings</option>
+                    <option value="28">WLED Noise</option>
+                    <option value="29">WLED Scanner</option>
+                    <option value="30">WLED Zigzag</option>
+                    <option value="31">WLED Aurora</option>
+                    <option value="32">WLED Prism</option>
+                    <option value="33">WLED Clouds</option>
+                    <option value="34">WLED Wavegrid</option>
+                    <option value="35">WLED Heartbeat</option>
+                    <option value="36">WLED Pinwheel</option>
+                    <option value="37">WLED Comet</option>
+                </select>
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>Profile
+                <input id="mode-hybrid-effect-profile" type="text" readonly value="hybrid idle slow breathe">
+            </label>
+            <label>Palette
+                <select id="mode-hybrid-effect-palette-mode">
+                    <option value="0">Rainbow</option>
+                    <option value="1">2 Colors</option>
+                    <option value="2">3 Colors</option>
+                </select>
+            </label>
+        </div>
+        <div class="grid-two">
+            <label>Color 1
+                <input id="mode-hybrid-effect-color1" type="color" value="#ff00b4">
+            </label>
+            <label>Color 2
+                <input id="mode-hybrid-effect-color2" type="color" value="#00e6ff">
+            </label>
+        </div>
+        <div class="grid-two" id="mode-hybrid-effect-color3-row">
+            <label>Color 3
+                <input id="mode-hybrid-effect-color3" type="color" value="#ffbe28">
+            </label>
+            <label></label>
+        </div>
+        <div id="mode-hybrid-effect-params-block">
+            <div class="grid-two">
+                <label>Speed (0..255)
+                    <input id="mode-hybrid-effect-speed-range" type="range" min="0" max="255" value="170">
+                </label>
+                <label>Speed Value
+                    <input id="mode-hybrid-effect-speed-value" type="number" min="0" max="255" value="170">
+                </label>
+            </div>
+            <div class="grid-two">
+                <label>Intensity (0..255)
+                    <input id="mode-hybrid-effect-intensity-range" type="range" min="0" max="255" value="180">
+                </label>
+                <label>Intensity Value
+                    <input id="mode-hybrid-effect-intensity-value" type="number" min="0" max="255" value="180">
+                </label>
+            </div>
+            <div class="grid-two">
+                <label>Scale (0..255)
+                    <input id="mode-hybrid-effect-scale-range" type="range" min="0" max="255" value="140">
+                </label>
+                <label>Scale Value
+                    <input id="mode-hybrid-effect-scale-value" type="number" min="0" max="255" value="140">
+                </label>
+            </div>
+        </div>
+        <div class="row">
+            <button id="mode-hybrid-effect-preview-btn" class="primary">Preview Selected Effect</button>
+            <button id="mode-hybrid-effect-apply-btn" class="good">Apply + Save Selected State</button>
+            <span class="muted">Current: <strong id="mode-hybrid-effect-current">-</strong></span>
+        </div>
+    </section>
 </div>
-<script src="/assets/js/app.js?v=20260405-5"></script>
+<script src="/assets/js/core/dom_http.js?v=20260406-core-1"></script>
+<script src="/assets/js/features/hybrid_effects.js?v=20260406-fx-2"></script>
+<script src="/assets/js/features/talk.js?v=20260406-talk-1"></script>
+<script src="/assets/js/features/server_tts.js?v=20260406-tts-1"></script>
+<script src="/assets/js/app.js?v=20260406-split-1"></script>
 </body>
 </html>
