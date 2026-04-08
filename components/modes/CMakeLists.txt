@@ -6,6 +6,10 @@ idf_component_register(
         "mode_offline_scripted/offline_submode_aura.c"
         "mode_offline_scripted/offline_submode_lottery.c"
         "mode_offline_scripted/offline_submode_prophecy.c"
+        "mode_hybrid_ai/hybrid_flow.c"
+        "mode_hybrid_ai/hybrid_policy.c"
+        "mode_hybrid_ai/hybrid_remote_contract.c"
+        "mode_hybrid_ai/hybrid_visuals.c"
         "mode_hybrid_ai/mode_hybrid_ai.c"
         "mode_installation/mode_installation.c"
     INCLUDE_DIRS
