@@ -5,6 +5,7 @@ idf_component_register(
         "task/mic_task_events.c"
         "task/mic_task_capture_ws.c"
         "task/mic_task_flow.c"
+        "task/mic_task_teardown.c"
         "task/mic_task_tts_pipeline.c"
         "task/mic_task_loopback.c"
         "ws/mic_ws_client.c"

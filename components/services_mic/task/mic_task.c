@@ -1,5 +1,6 @@
 #include "mic_task.h"
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -15,6 +16,7 @@
 #include "mic_task_events.h"
 #include "mic_task_flow.h"
 #include "mic_task_loopback.h"
+#include "mic_task_teardown.h"
 #include "mic_task_types.h"
 #include "mic_ws_client.h"
 #include "sdkconfig.h"
@@ -67,7 +69,20 @@ typedef enum {
     MIC_TASK_LOOP_BREAK,
 } mic_task_loop_action_t;
 
+typedef enum {
+    MIC_CAPTURE_FINISH_REASON_UNSPECIFIED = 0,
+    MIC_CAPTURE_FINISH_REASON_DEADLINE,
+    MIC_CAPTURE_FINISH_REASON_READ_TIMEOUT,
+    MIC_CAPTURE_FINISH_REASON_READ_ERROR,
+    MIC_CAPTURE_FINISH_REASON_COMMAND_STOP,
+    MIC_CAPTURE_FINISH_REASON_TASK_STOP,
+} mic_capture_finish_reason_t;
+
 static void finish_capture(mic_capture_ctx_t *ctx, mic_loopback_ctx_t *loopback, bool post_done);
+static void mic_capture_finish(mic_capture_ctx_t *ctx,
+                               mic_loopback_ctx_t *loopback,
+                               mic_capture_finish_reason_t reason,
+                               bool post_done);
 static void stop_loopback(mic_capture_ctx_t *capture, mic_loopback_ctx_t *loopback);
 static TickType_t ms_to_ticks_min1(uint32_t ms);
 static bool time_reached(TickType_t now, TickType_t deadline);
@@ -228,9 +243,42 @@ static void stream_loopback_samples(mic_loopback_ctx_t *loopback, const int32_t 
 
 static void finish_capture(mic_capture_ctx_t *ctx, mic_loopback_ctx_t *loopback, bool post_done)
 {
+    mic_capture_finish(ctx, loopback, MIC_CAPTURE_FINISH_REASON_UNSPECIFIED, post_done);
+}
+
+static const char *mic_capture_finish_reason_name(mic_capture_finish_reason_t reason)
+{
+    switch (reason) {
+    case MIC_CAPTURE_FINISH_REASON_DEADLINE:
+        return "deadline";
+    case MIC_CAPTURE_FINISH_REASON_READ_TIMEOUT:
+        return "read_timeout";
+    case MIC_CAPTURE_FINISH_REASON_READ_ERROR:
+        return "read_error";
+    case MIC_CAPTURE_FINISH_REASON_COMMAND_STOP:
+        return "command_stop";
+    case MIC_CAPTURE_FINISH_REASON_TASK_STOP:
+        return "task_stop";
+    case MIC_CAPTURE_FINISH_REASON_UNSPECIFIED:
+    default:
+        return "unspecified";
+    }
+}
+
+static void mic_capture_finish(mic_capture_ctx_t *ctx,
+                               mic_loopback_ctx_t *loopback,
+                               mic_capture_finish_reason_t reason,
+                               bool post_done)
+{
     if (ctx == NULL || loopback == NULL) {
         return;
     }
+
+    ESP_LOGI(TAG,
+             "capture finish reason=%s id=%" PRIu32 " post_done=%d",
+             mic_capture_finish_reason_name(reason),
+             ctx->capture_id,
+             post_done ? 1 : 0);
 
 #if CONFIG_ORB_MIC_WS_ENABLE
     if (ctx->ws_streaming) {
@@ -238,6 +286,7 @@ static void finish_capture(mic_capture_ctx_t *ctx, mic_loopback_ctx_t *loopback,
         ctx->ws_streaming = false;
     }
 #endif
+    mic_task_teardown_apply_capture(ctx, reason == MIC_CAPTURE_FINISH_REASON_TASK_STOP, TAG);
 
     (void)mic_i2s_hal_stop();
     ctx->active = false;
@@ -321,7 +370,7 @@ static void process_active_capture_iteration(mic_capture_ctx_t *capture,
 
     if (time_reached(xTaskGetTickCount(), capture->deadline_tick)) {
         mic_task_capture_finalize_intent(capture, TAG);
-        finish_capture(capture, loopback, true);
+        mic_capture_finish(capture, loopback, MIC_CAPTURE_FINISH_REASON_DEADLINE, true);
     }
 }
 
@@ -353,7 +402,7 @@ static mic_task_loop_action_t process_stream_iteration(mic_capture_ctx_t *captur
     if (err == ESP_ERR_TIMEOUT) {
         if (capture->active && time_reached(xTaskGetTickCount(), capture->deadline_tick)) {
             mic_task_capture_finalize_intent(capture, TAG);
-            finish_capture(capture, loopback, true);
+            mic_capture_finish(capture, loopback, MIC_CAPTURE_FINISH_REASON_READ_TIMEOUT, true);
         }
         mic_capture_loop_cooperate();
         return MIC_TASK_LOOP_CONTINUE;
@@ -365,7 +414,7 @@ static mic_task_loop_action_t process_stream_iteration(mic_capture_ctx_t *captur
         }
         uint32_t failed_id = capture->capture_id;
         if (capture->active) {
-            finish_capture(capture, loopback, false);
+            mic_capture_finish(capture, loopback, MIC_CAPTURE_FINISH_REASON_READ_ERROR, false);
         }
         if (loopback->active) {
             stop_loopback(capture, loopback);
@@ -415,7 +464,7 @@ static void mic_task_entry(void *arg)
     }
 
     if (capture.active) {
-        finish_capture(&capture, &loopback, false);
+        mic_capture_finish(&capture, &loopback, MIC_CAPTURE_FINISH_REASON_TASK_STOP, false);
     }
     if (loopback.active) {
         stop_loopback(&capture, &loopback);
@@ -520,9 +569,6 @@ esp_err_t mic_task_stop(void)
     }
 
     mic_task_log_stop_phase(MIC_TASK_STOP_PHASE_DRAINING);
-#if CONFIG_ORB_MIC_WS_ENABLE
-    mic_ws_client_abort();
-#endif
     (void)mic_i2s_hal_stop();
     mic_task_wake();
 

@@ -6,6 +6,13 @@
 #include "freertos/FreeRTOS.h"
 #include "orb_intents.h"
 
+typedef enum {
+    MIC_CAPTURE_WS_TEARDOWN_NONE = 0,
+    MIC_CAPTURE_WS_TEARDOWN_CAPTURE_SEND_FAIL,
+    MIC_CAPTURE_WS_TEARDOWN_KWS_FINISH_FAIL,
+    MIC_CAPTURE_WS_TEARDOWN_KWS_RESULT_FAIL,
+} mic_capture_ws_teardown_reason_t;
+
 typedef struct {
     bool active;
     uint32_t capture_id;
@@ -19,6 +26,8 @@ typedef struct {
     uint8_t ws_send_fail_streak;
     bool ws_result_used;
     esp_err_t ws_last_error;
+    bool ws_teardown_pending;
+    mic_capture_ws_teardown_reason_t ws_teardown_reason;
 } mic_capture_ctx_t;
 
 typedef struct {

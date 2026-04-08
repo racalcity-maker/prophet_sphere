@@ -63,6 +63,73 @@ static void ws_reset_tts_locked(void)
     g_mic_ws.tts.sample_rate_hz = 0U;
 }
 
+static const char *ws_close_reason_name(mic_ws_close_reason_t reason)
+{
+    switch (reason) {
+    case MIC_WS_CLOSE_REASON_TASK_STOP:
+        return "task_stop";
+    case MIC_WS_CLOSE_REASON_SESSION_RESTART:
+        return "session_restart";
+    case MIC_WS_CLOSE_REASON_CAPTURE_SEND_FAIL:
+        return "capture_send_fail";
+    case MIC_WS_CLOSE_REASON_KWS_DONE:
+        return "kws_done";
+    case MIC_WS_CLOSE_REASON_KWS_START_FAIL:
+        return "kws_start_fail";
+    case MIC_WS_CLOSE_REASON_KWS_FINISH_FAIL:
+        return "kws_finish_fail";
+    case MIC_WS_CLOSE_REASON_KWS_RESULT_FAIL:
+        return "kws_result_fail";
+    case MIC_WS_CLOSE_REASON_TTS_DONE:
+        return "tts_done";
+    case MIC_WS_CLOSE_REASON_TTS_REQUEST_SEND_FAIL:
+        return "tts_request_send_fail";
+    case MIC_WS_CLOSE_REASON_TTS_PROTOCOL_FAIL:
+        return "tts_protocol_fail";
+    case MIC_WS_CLOSE_REASON_TTS_REMOTE_FAILED:
+        return "tts_remote_failed";
+    case MIC_WS_CLOSE_REASON_TTS_TIMEOUT:
+        return "tts_timeout";
+    case MIC_WS_CLOSE_REASON_TTS_FIRST_CHUNK_TIMEOUT:
+        return "tts_first_chunk_timeout";
+    case MIC_WS_CLOSE_REASON_TTS_DISCONNECTED:
+        return "tts_disconnected";
+    case MIC_WS_CLOSE_REASON_DEINIT:
+        return "deinit";
+    case MIC_WS_CLOSE_REASON_LEGACY_ABORT:
+        return "legacy_abort";
+    case MIC_WS_CLOSE_REASON_UNSPECIFIED:
+    default:
+        return "unspecified";
+    }
+}
+
+static bool ws_reason_requires_transport_abort(mic_ws_close_reason_t reason)
+{
+    switch (reason) {
+    case MIC_WS_CLOSE_REASON_TASK_STOP:
+    case MIC_WS_CLOSE_REASON_SESSION_RESTART:
+    case MIC_WS_CLOSE_REASON_CAPTURE_SEND_FAIL:
+    case MIC_WS_CLOSE_REASON_KWS_START_FAIL:
+    case MIC_WS_CLOSE_REASON_KWS_FINISH_FAIL:
+    case MIC_WS_CLOSE_REASON_TTS_REQUEST_SEND_FAIL:
+    case MIC_WS_CLOSE_REASON_TTS_TIMEOUT:
+    case MIC_WS_CLOSE_REASON_TTS_FIRST_CHUNK_TIMEOUT:
+    case MIC_WS_CLOSE_REASON_TTS_DISCONNECTED:
+    case MIC_WS_CLOSE_REASON_DEINIT:
+    case MIC_WS_CLOSE_REASON_LEGACY_ABORT:
+        return true;
+    case MIC_WS_CLOSE_REASON_UNSPECIFIED:
+    case MIC_WS_CLOSE_REASON_KWS_DONE:
+    case MIC_WS_CLOSE_REASON_KWS_RESULT_FAIL:
+    case MIC_WS_CLOSE_REASON_TTS_DONE:
+    case MIC_WS_CLOSE_REASON_TTS_PROTOCOL_FAIL:
+    case MIC_WS_CLOSE_REASON_TTS_REMOTE_FAILED:
+    default:
+        return false;
+    }
+}
+
 TickType_t mic_ws_ms_to_ticks_min1(uint32_t ms)
 {
     TickType_t ticks = pdMS_TO_TICKS(ms);
@@ -242,7 +309,7 @@ esp_err_t mic_ws_acquire_client(bool block_if_tts_active,
     portEXIT_CRITICAL(&g_mic_ws_lock);
 
     if (!reuse_connection) {
-        mic_ws_client_abort();
+        mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_SESSION_RESTART);
         ESP_RETURN_ON_ERROR(ws_create_and_start_client(&client), TAG, "mic ws start failed");
     }
 
@@ -316,6 +383,11 @@ void mic_ws_websocket_event_handler(void *handler_args, esp_event_base_t base, i
 
     portENTER_CRITICAL(&g_mic_ws_lock);
     mode = g_mic_ws.mode;
+    if (mode == MIC_WS_MODE_NONE) {
+        g_mic_ws.transport.rx_len = 0U;
+        portEXIT_CRITICAL(&g_mic_ws_lock);
+        return;
+    }
     if (ev->payload_offset == 0) {
         g_mic_ws.transport.rx_len = 0U;
     }
@@ -426,18 +498,46 @@ esp_err_t mic_ws_client_init(void)
     return ESP_OK;
 }
 
-void mic_ws_client_abort(void)
+void mic_ws_client_close_current_session(mic_ws_close_reason_t reason)
 {
-    esp_websocket_client_handle_t client = NULL;
+    bool had_kws = false;
+    bool had_tts = false;
+    mic_ws_mode_t prev_mode = MIC_WS_MODE_NONE;
 
     portENTER_CRITICAL(&g_mic_ws_lock);
-    client = g_mic_ws.transport.client;
-    ws_reset_transport_locked();
+    prev_mode = g_mic_ws.mode;
+    had_kws = g_mic_ws.kws.session_active || g_mic_ws.kws.start_sent;
+    had_tts = g_mic_ws.tts.tts_active || g_mic_ws.tts.tts_done || g_mic_ws.tts.tts_failed;
     ws_reset_kws_locked();
     ws_reset_tts_locked();
+    g_mic_ws.transport.rx_len = 0U;
     g_mic_ws.mode = MIC_WS_MODE_NONE;
     portEXIT_CRITICAL(&g_mic_ws_lock);
 
+    if (had_kws || had_tts || prev_mode != MIC_WS_MODE_NONE) {
+        ESP_LOGI(TAG,
+                 "mic ws session close reason=%s mode=%d kws=%d tts=%d",
+                 ws_close_reason_name(reason),
+                 (int)prev_mode,
+                 had_kws ? 1 : 0,
+                 had_tts ? 1 : 0);
+    }
+}
+
+void mic_ws_client_abort_transport(mic_ws_close_reason_t reason)
+{
+    esp_websocket_client_handle_t client = NULL;
+    bool had_transport = false;
+
+    portENTER_CRITICAL(&g_mic_ws_lock);
+    had_transport = (g_mic_ws.transport.client != NULL) || g_mic_ws.transport.connected;
+    client = g_mic_ws.transport.client;
+    ws_reset_transport_locked();
+    portEXIT_CRITICAL(&g_mic_ws_lock);
+
+    if (had_transport) {
+        ESP_LOGI(TAG, "mic ws transport abort reason=%s", ws_close_reason_name(reason));
+    }
     if (client != NULL) {
         (void)esp_websocket_client_destroy_on_exit(client);
         esp_err_t stop_err = esp_websocket_client_stop(client);
@@ -447,9 +547,28 @@ void mic_ws_client_abort(void)
     }
 }
 
+void mic_ws_client_fail_current_session(mic_ws_close_reason_t reason)
+{
+    mic_ws_client_close_current_session(reason);
+    if (ws_reason_requires_transport_abort(reason)) {
+        mic_ws_client_abort_transport(reason);
+    }
+}
+
+void mic_ws_client_session_close(mic_ws_close_reason_t reason)
+{
+    /* Graceful session close without forcing transport abort. */
+    mic_ws_client_close_current_session(reason);
+}
+
+void mic_ws_client_abort(void)
+{
+    mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_LEGACY_ABORT);
+}
+
 void mic_ws_client_deinit(void)
 {
-    mic_ws_client_abort();
+    mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_DEINIT);
     portENTER_CRITICAL(&g_mic_ws_lock);
     g_mic_ws.initialized = false;
     portEXIT_CRITICAL(&g_mic_ws_lock);

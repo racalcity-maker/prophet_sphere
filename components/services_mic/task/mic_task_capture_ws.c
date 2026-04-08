@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stddef.h>
 #include "esp_log.h"
+#include "mic_task_teardown.h"
 #include "mic_ws_client.h"
 #include "orb_intents.h"
 #include "sdkconfig.h"
@@ -26,6 +27,66 @@
 #define MIC_WS_DISABLE_FAIL_STREAK 80U
 #define MIC_WS_LOG_EVERY_FAILS 10U
 #define MIC_WS_RESYNC_MAX_ATTEMPTS 2U
+
+static bool should_try_ws_resync(esp_err_t err)
+{
+    return err == ESP_ERR_INVALID_STATE || err == ESP_FAIL || err == ESP_ERR_TIMEOUT;
+}
+
+static bool try_ws_resync_and_resend(mic_capture_ctx_t *ctx, const int16_t *samples, uint16_t sample_count)
+{
+    if (ctx == NULL || samples == NULL || sample_count == 0U) {
+        return false;
+    }
+
+    for (uint32_t attempt = 0U; attempt < MIC_WS_RESYNC_MAX_ATTEMPTS; ++attempt) {
+        esp_err_t start_err = mic_ws_client_session_start(ctx->capture_id, CONFIG_ORB_MIC_SAMPLE_RATE_HZ);
+        if (start_err != ESP_OK) {
+            continue;
+        }
+        esp_err_t resend_err = mic_ws_client_session_send_pcm16(samples, sample_count);
+        if (resend_err == ESP_OK) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void handle_ws_send_fail(mic_capture_ctx_t *ctx,
+                                esp_err_t err,
+                                const int16_t *samples,
+                                uint16_t sample_count,
+                                const char *log_tag)
+{
+    if (ctx == NULL) {
+        return;
+    }
+
+    if (should_try_ws_resync(err)) {
+        bool recovered = try_ws_resync_and_resend(ctx, samples, sample_count);
+        if (recovered) {
+            ctx->ws_send_fail_streak = 0U;
+            ESP_LOGW(log_tag, "mic ws stream recovered via resync (capture=%" PRIu32 ")", ctx->capture_id);
+            return;
+        }
+    }
+
+    ctx->ws_send_fail_streak++;
+    if ((ctx->ws_send_fail_streak % MIC_WS_LOG_EVERY_FAILS) == 1U) {
+        ESP_LOGW(log_tag,
+                 "mic ws stream send fail streak=%u err=%s",
+                 (unsigned)ctx->ws_send_fail_streak,
+                 esp_err_to_name(err));
+    }
+    if (ctx->ws_send_fail_streak >= MIC_WS_DISABLE_FAIL_STREAK) {
+        ctx->ws_streaming = false;
+        ESP_LOGW(log_tag,
+                 "mic ws stream disabled after failures streak=%u last_err=%s",
+                 (unsigned)ctx->ws_send_fail_streak,
+                 esp_err_to_name(err));
+        mic_task_teardown_request_ws(ctx, MIC_CAPTURE_WS_TEARDOWN_CAPTURE_SEND_FAIL, err);
+    }
+}
 
 int16_t mic_task_capture_raw_to_pcm16(int32_t raw_sample)
 {
@@ -63,59 +124,12 @@ void mic_task_capture_push_ws_chunk(mic_capture_ctx_t *ctx, const int32_t *sampl
     int16_t pcm16_chunk[CONFIG_ORB_MIC_READ_CHUNK_SAMPLES];
     size_t used = 0U;
 
-#define SHOULD_TRY_WS_RESYNC(_e_) ((_e_) == ESP_ERR_INVALID_STATE || (_e_) == ESP_FAIL || (_e_) == ESP_ERR_TIMEOUT)
-
-#define TRY_WS_RESYNC_AND_RESEND(_samples_, _count_, _ok_)                                                         \
-    do {                                                                                                            \
-        (_ok_) = false;                                                                                             \
-        for (uint32_t _a = 0U; _a < MIC_WS_RESYNC_MAX_ATTEMPTS; ++_a) {                                            \
-            esp_err_t _s = mic_ws_client_session_start(ctx->capture_id, CONFIG_ORB_MIC_SAMPLE_RATE_HZ);           \
-            if (_s != ESP_OK) {                                                                                     \
-                continue;                                                                                            \
-            }                                                                                                       \
-            esp_err_t _r = mic_ws_client_session_send_pcm16((_samples_), (_count_));                               \
-            if (_r == ESP_OK) {                                                                                     \
-                (_ok_) = true;                                                                                      \
-                break;                                                                                               \
-            }                                                                                                       \
-        }                                                                                                           \
-    } while (0)
-
-#define HANDLE_WS_SEND_FAIL(_err_, _samples_, _count_)                                                             \
-    do {                                                                                                            \
-        esp_err_t _e = (_err_);                                                                                     \
-        bool _recovered = false;                                                                                    \
-        if (SHOULD_TRY_WS_RESYNC(_e)) {                                                                             \
-            TRY_WS_RESYNC_AND_RESEND((_samples_), (_count_), _recovered);                                          \
-            if (_recovered) {                                                                                       \
-                ctx->ws_send_fail_streak = 0U;                                                                      \
-                ESP_LOGW(log_tag, "mic ws stream recovered via resync (capture=%" PRIu32 ")", ctx->capture_id);   \
-                break;                                                                                               \
-            }                                                                                                       \
-        }                                                                                                           \
-        ctx->ws_send_fail_streak++;                                                                                 \
-        if ((ctx->ws_send_fail_streak % MIC_WS_LOG_EVERY_FAILS) == 1U) {                                           \
-            ESP_LOGW(log_tag,                                                                                       \
-                     "mic ws stream send fail streak=%u err=%s",                                                    \
-                     (unsigned)ctx->ws_send_fail_streak,                                                            \
-                     esp_err_to_name(_e));                                                                          \
-        }                                                                                                           \
-        if (ctx->ws_send_fail_streak >= MIC_WS_DISABLE_FAIL_STREAK) {                                              \
-            ctx->ws_streaming = false;                                                                              \
-            ESP_LOGW(log_tag,                                                                                       \
-                     "mic ws stream disabled after failures streak=%u last_err=%s",                                \
-                     (unsigned)ctx->ws_send_fail_streak,                                                            \
-                     esp_err_to_name(_e));                                                                          \
-            mic_ws_client_abort();                                                                                  \
-        }                                                                                                           \
-    } while (0)
-
     for (size_t i = 0; i < sample_count; ++i) {
         pcm16_chunk[used++] = mic_task_capture_raw_to_pcm16(samples[i]);
         if (used == CONFIG_ORB_MIC_READ_CHUNK_SAMPLES) {
             esp_err_t err = mic_ws_client_session_send_pcm16(pcm16_chunk, (uint16_t)used);
             if (err != ESP_OK) {
-                HANDLE_WS_SEND_FAIL(err, pcm16_chunk, (uint16_t)used);
+                handle_ws_send_fail(ctx, err, pcm16_chunk, (uint16_t)used, log_tag);
                 if (ctx->ws_send_fail_streak == 0U) {
                     used = 0U;
                     continue;
@@ -130,15 +144,11 @@ void mic_task_capture_push_ws_chunk(mic_capture_ctx_t *ctx, const int32_t *sampl
     if (used > 0U) {
         esp_err_t err = mic_ws_client_session_send_pcm16(pcm16_chunk, (uint16_t)used);
         if (err != ESP_OK) {
-            HANDLE_WS_SEND_FAIL(err, pcm16_chunk, (uint16_t)used);
+            handle_ws_send_fail(ctx, err, pcm16_chunk, (uint16_t)used, log_tag);
             return;
         }
         ctx->ws_send_fail_streak = 0U;
     }
-
-#undef SHOULD_TRY_WS_RESYNC
-#undef TRY_WS_RESYNC_AND_RESEND
-#undef HANDLE_WS_SEND_FAIL
 }
 
 void mic_task_capture_finalize_intent(mic_capture_ctx_t *ctx, const char *log_tag)
@@ -150,7 +160,9 @@ void mic_task_capture_finalize_intent(mic_capture_ctx_t *ctx, const char *log_ta
     ctx->intent_id = ORB_INTENT_UNKNOWN;
     ctx->intent_confidence_permille = 0U;
     ctx->ws_result_used = false;
-    ctx->ws_last_error = ESP_OK;
+    if (!ctx->ws_teardown_pending) {
+        ctx->ws_last_error = ESP_OK;
+    }
 
     bool ws_used = false;
 #if CONFIG_ORB_MIC_WS_ENABLE
@@ -180,14 +192,12 @@ void mic_task_capture_finalize_intent(mic_capture_ctx_t *ctx, const char *log_ta
                              ws_conf);
                 }
             } else {
-                ctx->ws_last_error = ws_err;
                 ESP_LOGW(log_tag, "mic ws result timeout/fail: %s", esp_err_to_name(ws_err));
-                mic_ws_client_abort();
+                mic_task_teardown_request_ws(ctx, MIC_CAPTURE_WS_TEARDOWN_KWS_RESULT_FAIL, ws_err);
             }
         } else {
-            ctx->ws_last_error = ws_err;
             ESP_LOGW(log_tag, "mic ws finish failed: %s", esp_err_to_name(ws_err));
-            mic_ws_client_abort();
+            mic_task_teardown_request_ws(ctx, MIC_CAPTURE_WS_TEARDOWN_KWS_FINISH_FAIL, ws_err);
         }
 
         ctx->ws_streaming = false;

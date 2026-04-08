@@ -99,6 +99,8 @@ static void start_capture(mic_capture_ctx_t *capture,
     capture->ws_send_fail_streak = 0U;
     capture->ws_result_used = false;
     capture->ws_last_error = ESP_OK;
+    capture->ws_teardown_pending = false;
+    capture->ws_teardown_reason = MIC_CAPTURE_WS_TEARDOWN_NONE;
     capture->deadline_tick = xTaskGetTickCount() + ms_to_ticks_min1(capture_ms);
     ops->update_status(capture, loopback->active);
 
