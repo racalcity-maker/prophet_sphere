@@ -185,6 +185,7 @@ typedef struct {
 } mic_command_t;
 
 esp_err_t app_tasking_init(void);
+/* Implemented by app_core bootstrap: starts FSM + app_control_task owner. */
 esp_err_t app_tasking_start_app_control_task(void);
 
 esp_err_t app_tasking_post_event(const app_event_t *event, uint32_t timeout_ms);

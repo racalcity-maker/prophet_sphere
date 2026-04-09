@@ -9,7 +9,7 @@ idf_component_register(
         "service"
         "task"
     REQUIRES
-        app_core
+        control_bus
         freertos
         common
         driver

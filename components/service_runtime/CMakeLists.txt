@@ -6,7 +6,7 @@ idf_component_register(
     REQUIRES
         freertos
         common
-        app_core
+        control_bus
         services_touch
         services_led
         services_audio

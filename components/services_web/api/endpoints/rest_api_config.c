@@ -2,28 +2,21 @@
 
 #include <inttypes.h>
 #include <stdio.h>
-#include "app_tasking.h"
-#include "config_manager.h"
+#include "app_api.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "log_tags.h"
 #include "rest_api_common.h"
-#include "sdkconfig.h"
 
 static const char *TAG = LOG_TAG_REST;
-
-static uint32_t request_timeout_ms(void)
-{
-    return (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
-}
 
 static esp_err_t send_config_snapshot(httpd_req_t *req)
 {
     static orb_runtime_config_t cfg;
     static char json[2048];
 
-    esp_err_t err = config_manager_get_snapshot(&cfg);
+    esp_err_t err = app_api_get_runtime_config(&cfg);
     if (err != ESP_OK) {
         return rest_api_send_error_json(req, "500 Internal Server Error", "config_read_failed");
     }
@@ -48,7 +41,7 @@ static esp_err_t send_config_snapshot(httpd_req_t *req)
                    cfg.mqtt_enabled ? "true" : "false",
                    cfg.ai_enabled ? "true" : "false",
                    cfg.web_enabled ? "true" : "false",
-                   config_manager_offline_submode_to_str(cfg.offline_submode),
+                   app_api_offline_submode_to_str(cfg.offline_submode),
                    cfg.aura_gap_ms,
                    cfg.aura_intro_dir,
                    cfg.aura_response_dir,
@@ -86,7 +79,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     static char intro_dir[ORB_CONFIG_PATH_MAX];
     static char response_dir[ORB_CONFIG_PATH_MAX];
 
-    esp_err_t err = config_manager_get_snapshot(&cfg);
+    esp_err_t err = app_api_get_runtime_config(&cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "config snapshot failed: %s", esp_err_to_name(err));
         return rest_api_send_error_json(req, "500 Internal Server Error", "config_read_failed");
@@ -110,11 +103,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         if (!rest_api_parse_u32(value, &brightness) || brightness > 255U) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_brightness");
         }
-        (void)config_manager_set_led_brightness((uint8_t)brightness);
-        led_command_t led_cmd = { 0 };
-        led_cmd.id = LED_CMD_SET_BRIGHTNESS;
-        led_cmd.payload.set_brightness.brightness = (uint8_t)brightness;
-        (void)app_tasking_send_led_command(&led_cmd, request_timeout_ms());
+        (void)app_api_set_led_brightness((uint8_t)brightness, true);
         cfg.led_brightness = (uint8_t)brightness;
         has_any = true;
         brightness_changed = true;
@@ -125,11 +114,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         if (!rest_api_parse_u32(value, &volume) || volume > 100U) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_volume");
         }
-        (void)config_manager_set_audio_volume((uint8_t)volume);
-        audio_command_t audio_cmd = { 0 };
-        audio_cmd.id = AUDIO_CMD_SET_VOLUME;
-        audio_cmd.payload.set_volume.volume = (uint8_t)volume;
-        (void)app_tasking_send_audio_command(&audio_cmd, request_timeout_ms());
+        (void)app_api_set_audio_volume((uint8_t)volume, true);
         cfg.audio_volume = (uint8_t)volume;
         has_any = true;
         volume_changed = true;
@@ -137,10 +122,10 @@ static esp_err_t config_post_handler(httpd_req_t *req)
 
     if (rest_api_query_value(req, "offline_submode", value, sizeof(value)) == ESP_OK) {
         orb_offline_submode_t submode = ORB_OFFLINE_SUBMODE_AURA;
-        if (!config_manager_parse_offline_submode(value, &submode)) {
+        if (!app_api_parse_offline_submode(value, &submode)) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_offline_submode");
         }
-        (void)config_manager_set_offline_submode(submode);
+        (void)app_api_set_offline_submode(submode);
         cfg.offline_submode = submode;
         has_any = true;
         submode_changed = true;
@@ -151,7 +136,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         if (!rest_api_parse_u32(value, &gap_ms) || gap_ms > 60000U) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_aura_gap_ms");
         }
-        (void)config_manager_set_aura_gap_ms(gap_ms);
+        (void)app_api_set_aura_gap_ms(gap_ms);
         cfg.aura_gap_ms = gap_ms;
         has_any = true;
         aura_changed = true;
@@ -170,7 +155,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     if (intro_changed || response_changed) {
         const char *intro = intro_changed ? intro_dir : cfg.aura_intro_dir;
         const char *response = response_changed ? response_dir : cfg.aura_response_dir;
-        if (config_manager_set_aura_directories(intro, response) != ESP_OK) {
+        if (app_api_set_aura_directories(intro, response) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_aura_dirs");
         }
         (void)snprintf(cfg.aura_intro_dir, sizeof(cfg.aura_intro_dir), "%s", intro);
@@ -201,7 +186,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         hybrid_retry_changed = true;
     }
     if (hybrid_changed) {
-        if (config_manager_set_hybrid_params((uint16_t)reject_th_u32, mic_capture_ms) != ESP_OK) {
+        if (app_api_set_hybrid_params((uint16_t)reject_th_u32, mic_capture_ms) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_hybrid_params");
         }
         cfg.hybrid_reject_threshold_permille = (uint16_t)reject_th_u32;
@@ -209,7 +194,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         has_any = true;
     }
     if (hybrid_retry_changed) {
-        if (config_manager_set_hybrid_unknown_retry_max((uint8_t)unknown_retry_u32) != ESP_OK) {
+        if (app_api_set_hybrid_unknown_retry_max((uint8_t)unknown_retry_u32) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_hybrid_unknown_retry_max");
         }
         cfg.hybrid_unknown_retry_max = (uint8_t)unknown_retry_u32;
@@ -331,11 +316,12 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     }
 
     if (hybrid_effect_changed) {
-        if (config_manager_set_hybrid_effect(hybrid_effect_idle_scene_id,
-                                             hybrid_effect_talk_scene_id,
-                                             (uint8_t)hybrid_effect_speed_u32,
-                                             (uint8_t)hybrid_effect_intensity_u32,
-                                             (uint8_t)hybrid_effect_scale_u32) != ESP_OK) {
+        if (app_api_set_hybrid_effect(hybrid_effect_idle_scene_id,
+                                      hybrid_effect_talk_scene_id,
+                                      (uint8_t)hybrid_effect_speed_u32,
+                                      (uint8_t)hybrid_effect_intensity_u32,
+                                      (uint8_t)hybrid_effect_scale_u32,
+                                      true) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_hybrid_effect");
         }
         cfg.hybrid_effect_idle_scene_id = hybrid_effect_idle_scene_id;
@@ -343,25 +329,20 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         cfg.hybrid_effect_speed = (uint8_t)hybrid_effect_speed_u32;
         cfg.hybrid_effect_intensity = (uint8_t)hybrid_effect_intensity_u32;
         cfg.hybrid_effect_scale = (uint8_t)hybrid_effect_scale_u32;
-        led_command_t led_cmd = { 0 };
-        led_cmd.id = LED_CMD_SET_EFFECT_PARAMS;
-        led_cmd.payload.set_effect_params.speed = cfg.hybrid_effect_speed;
-        led_cmd.payload.set_effect_params.intensity = cfg.hybrid_effect_intensity;
-        led_cmd.payload.set_effect_params.scale = cfg.hybrid_effect_scale;
-        (void)app_tasking_send_led_command(&led_cmd, request_timeout_ms());
         has_any = true;
     }
     if (hybrid_effect_palette_changed) {
-        if (config_manager_set_hybrid_effect_palette((uint8_t)hybrid_effect_palette_mode_u32,
-                                                     (uint8_t)hybrid_effect_color1_r_u32,
-                                                     (uint8_t)hybrid_effect_color1_g_u32,
-                                                     (uint8_t)hybrid_effect_color1_b_u32,
-                                                     (uint8_t)hybrid_effect_color2_r_u32,
-                                                     (uint8_t)hybrid_effect_color2_g_u32,
-                                                     (uint8_t)hybrid_effect_color2_b_u32,
-                                                     (uint8_t)hybrid_effect_color3_r_u32,
-                                                     (uint8_t)hybrid_effect_color3_g_u32,
-                                                     (uint8_t)hybrid_effect_color3_b_u32) != ESP_OK) {
+        if (app_api_set_hybrid_effect_palette((uint8_t)hybrid_effect_palette_mode_u32,
+                                              (uint8_t)hybrid_effect_color1_r_u32,
+                                              (uint8_t)hybrid_effect_color1_g_u32,
+                                              (uint8_t)hybrid_effect_color1_b_u32,
+                                              (uint8_t)hybrid_effect_color2_r_u32,
+                                              (uint8_t)hybrid_effect_color2_g_u32,
+                                              (uint8_t)hybrid_effect_color2_b_u32,
+                                              (uint8_t)hybrid_effect_color3_r_u32,
+                                              (uint8_t)hybrid_effect_color3_g_u32,
+                                              (uint8_t)hybrid_effect_color3_b_u32,
+                                              true) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_hybrid_effect_palette");
         }
         cfg.hybrid_effect_palette_mode = (uint8_t)hybrid_effect_palette_mode_u32;
@@ -374,19 +355,6 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         cfg.hybrid_effect_color3_r = (uint8_t)hybrid_effect_color3_r_u32;
         cfg.hybrid_effect_color3_g = (uint8_t)hybrid_effect_color3_g_u32;
         cfg.hybrid_effect_color3_b = (uint8_t)hybrid_effect_color3_b_u32;
-        led_command_t led_cmd = { 0 };
-        led_cmd.id = LED_CMD_SET_EFFECT_PALETTE;
-        led_cmd.payload.set_effect_palette.mode = cfg.hybrid_effect_palette_mode;
-        led_cmd.payload.set_effect_palette.c1_r = cfg.hybrid_effect_color1_r;
-        led_cmd.payload.set_effect_palette.c1_g = cfg.hybrid_effect_color1_g;
-        led_cmd.payload.set_effect_palette.c1_b = cfg.hybrid_effect_color1_b;
-        led_cmd.payload.set_effect_palette.c2_r = cfg.hybrid_effect_color2_r;
-        led_cmd.payload.set_effect_palette.c2_g = cfg.hybrid_effect_color2_g;
-        led_cmd.payload.set_effect_palette.c2_b = cfg.hybrid_effect_color2_b;
-        led_cmd.payload.set_effect_palette.c3_r = cfg.hybrid_effect_color3_r;
-        led_cmd.payload.set_effect_palette.c3_g = cfg.hybrid_effect_color3_g;
-        led_cmd.payload.set_effect_palette.c3_b = cfg.hybrid_effect_color3_b;
-        (void)app_tasking_send_led_command(&led_cmd, request_timeout_ms());
         has_any = true;
     }
 
@@ -398,9 +366,9 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         bg_fade_out_changed = true;
     }
     if (bg_fade_out_changed) {
-        if (config_manager_set_prophecy_background(cfg.prophecy_bg_gain_permille,
-                                                   cfg.prophecy_bg_fade_in_ms,
-                                                   bg_fade_out_ms) != ESP_OK) {
+        if (app_api_set_prophecy_background(cfg.prophecy_bg_gain_permille,
+                                            cfg.prophecy_bg_fade_in_ms,
+                                            bg_fade_out_ms) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_prophecy_bg_fade_out_ms");
         }
         cfg.prophecy_bg_fade_out_ms = bg_fade_out_ms;
@@ -438,7 +406,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         parsed = true;
     }
     if (parsed) {
-        (void)config_manager_set_feature_flags(network, mqtt, ai, web);
+        (void)app_api_set_feature_flags(network, mqtt, ai, web);
         cfg.network_enabled = network;
         cfg.mqtt_enabled = mqtt;
         cfg.ai_enabled = ai;
@@ -454,7 +422,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         }
     }
     if (persist) {
-        (void)config_manager_save();
+        (void)app_api_save_runtime_config();
         ESP_LOGI(TAG, "config save requested uri=%s", req ? req->uri : "-");
     }
 
@@ -478,7 +446,7 @@ static esp_err_t config_post_handler(httpd_req_t *req)
              (int)flags_changed,
              cfg.led_brightness,
              cfg.audio_volume,
-             config_manager_offline_submode_to_str(cfg.offline_submode),
+             app_api_offline_submode_to_str(cfg.offline_submode),
              (unsigned)cfg.hybrid_reject_threshold_permille,
              cfg.hybrid_mic_capture_ms,
              (unsigned)cfg.hybrid_unknown_retry_max,

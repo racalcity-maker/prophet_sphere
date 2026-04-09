@@ -93,13 +93,13 @@ static void talk_live_unlock(void)
 static esp_err_t talk_live_send_pcm_start(uint32_t timeout_ms)
 {
     audio_command_t cmd = { .id = AUDIO_CMD_PCM_STREAM_START };
-    return app_tasking_send_audio_command(&cmd, timeout_ms);
+    return app_media_gateway_send_audio_command(&cmd, timeout_ms);
 }
 
 static esp_err_t talk_live_send_pcm_stop(uint32_t timeout_ms)
 {
     audio_command_t cmd = { .id = AUDIO_CMD_PCM_STREAM_STOP };
-    return app_tasking_send_audio_command(&cmd, timeout_ms);
+    return app_media_gateway_send_audio_command(&cmd, timeout_ms);
 }
 
 static esp_err_t talk_live_send_pcm_chunk(const int16_t *samples, uint16_t sample_count, uint32_t timeout_ms)
@@ -107,7 +107,7 @@ static esp_err_t talk_live_send_pcm_chunk(const int16_t *samples, uint16_t sampl
     if (samples == NULL || sample_count == 0U || sample_count > AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES) {
         return ESP_ERR_INVALID_ARG;
     }
-    return app_tasking_send_audio_pcm_chunk_copy(samples, sample_count, timeout_ms);
+    return app_media_gateway_send_audio_pcm_chunk_copy(samples, sample_count, timeout_ms);
 }
 
 static void talk_live_feeder_task(void *arg)

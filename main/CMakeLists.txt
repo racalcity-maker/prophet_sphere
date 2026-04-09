@@ -1,10 +1,20 @@
 idf_component_register(
     SRCS
         "app_main.c"
+        "bootstrap/orb_bootstrap.c"
+        "bootstrap/orb_bootstrap_init.c"
+        "bootstrap/orb_bootstrap_runtime.c"
+        "bootstrap/orb_bootstrap_inputs.c"
+        "bootstrap/orb_bootstrap_diag.c"
+        "bootstrap/orb_mode_runtime_policy.c"
+    INCLUDE_DIRS
+        "."
+        "bootstrap"
     REQUIRES
         nvs_flash
         bsp
         common
+        control_bus
         app_core
         service_runtime
         services_config

@@ -43,9 +43,6 @@ static SemaphoreHandle_t s_transition_mutex;
 static service_ctx_t s_service_ctx[SERVICE_RUNTIME_COUNT];
 static service_runtime_requirements_t s_active_requirements;
 
-#define SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS \
-    (SERVICE_RUNTIME_REQ_TOUCH | SERVICE_RUNTIME_REQ_LED | SERVICE_RUNTIME_REQ_AUDIO)
-
 static esp_err_t start_touch(void)
 {
     return touch_service_start_task();
@@ -255,77 +252,6 @@ static esp_err_t call_lifecycle_fn(service_lifecycle_fn_t fn, const char *servic
     esp_err_t err = fn();
     service_lifecycle_guard_exit();
     return err;
-}
-
-static network_profile_t mode_network_profile(orb_mode_t mode)
-{
-#if !CONFIG_ORB_ENABLE_NETWORK
-    (void)mode;
-    return NETWORK_PROFILE_NONE;
-#else
-    network_status_t network_status = { 0 };
-    const bool has_network_status = (network_manager_get_status(&network_status) == ESP_OK);
-    const bool sta_link_is_up = has_network_status && network_status.network_up &&
-                                (network_status.active_profile == NETWORK_PROFILE_STA ||
-                                 network_status.active_profile == NETWORK_PROFILE_APSTA);
-
-    switch (mode) {
-    case ORB_MODE_OFFLINE_SCRIPTED:
-#if CONFIG_ORB_NETWORK_OFFLINE_USE_SOFTAP
-        if (sta_link_is_up) {
-            return NETWORK_PROFILE_STA;
-        }
-        return NETWORK_PROFILE_SOFTAP;
-#else
-        return NETWORK_PROFILE_NONE;
-#endif
-    case ORB_MODE_HYBRID_AI:
-#if CONFIG_ORB_NETWORK_HYBRID_USE_STA
-        return NETWORK_PROFILE_APSTA;
-#else
-        return NETWORK_PROFILE_NONE;
-#endif
-    case ORB_MODE_INSTALLATION_SLAVE:
-#if CONFIG_ORB_NETWORK_INSTALLATION_USE_STA
-        return NETWORK_PROFILE_APSTA;
-#elif CONFIG_ORB_NETWORK_INSTALLATION_USE_SOFTAP
-        return NETWORK_PROFILE_SOFTAP;
-#else
-        return NETWORK_PROFILE_NONE;
-#endif
-    case ORB_MODE_NONE:
-    default:
-        return NETWORK_PROFILE_NONE;
-    }
-#endif
-}
-
-static service_runtime_requirements_t mode_requirements(orb_mode_t mode)
-{
-    const network_profile_t net_profile = mode_network_profile(mode);
-    const bool want_network = (net_profile != NETWORK_PROFILE_NONE);
-    service_runtime_requirements_t net_group = 0U;
-    if (want_network) {
-        net_group |= SERVICE_RUNTIME_REQ_NETWORK;
-        net_group |= SERVICE_RUNTIME_REQ_WEB;
-    }
-
-    switch (mode) {
-    case ORB_MODE_HYBRID_AI:
-        if (want_network) {
-            return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS | SERVICE_RUNTIME_REQ_MIC | SERVICE_RUNTIME_REQ_STORAGE |
-                   net_group;
-        }
-        return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS | SERVICE_RUNTIME_REQ_MIC | SERVICE_RUNTIME_REQ_STORAGE;
-    case ORB_MODE_INSTALLATION_SLAVE:
-        return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS | SERVICE_RUNTIME_REQ_MIC | SERVICE_RUNTIME_REQ_STORAGE |
-               net_group;
-    case ORB_MODE_OFFLINE_SCRIPTED:
-        return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS | SERVICE_RUNTIME_REQ_MIC | SERVICE_RUNTIME_REQ_STORAGE | net_group;
-    case ORB_MODE_NONE:
-    default:
-        return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS;
-    }
 }
 
 static esp_err_t ensure_initialized(service_runtime_id_t service)
@@ -605,12 +531,14 @@ esp_err_t service_runtime_init(void)
     return ESP_OK;
 }
 
-esp_err_t service_runtime_apply_mode(orb_mode_t previous_mode, orb_mode_t target_mode)
+esp_err_t service_runtime_apply_plan(const service_runtime_mode_plan_t *previous_plan,
+                                     const service_runtime_mode_plan_t *target_plan)
 {
     ESP_RETURN_ON_ERROR(service_runtime_init(), TAG, "runtime init failed");
 
-    network_profile_t target_profile = mode_network_profile(target_mode);
-    const service_runtime_requirements_t requirements = mode_requirements(target_mode);
+    if (target_plan == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
     ESP_RETURN_ON_ERROR(lock_transition(), TAG, "runtime transition lock failed");
 
     service_runtime_requirements_t previous_requirements = 0U;
@@ -621,8 +549,8 @@ esp_err_t service_runtime_apply_mode(orb_mode_t previous_mode, orb_mode_t target
     }
 
     network_profile_t previous_profile = get_current_desired_profile_snapshot();
-    if (previous_profile == NETWORK_PROFILE_NONE) {
-        previous_profile = mode_network_profile(previous_mode);
+    if (previous_profile == NETWORK_PROFILE_NONE && previous_plan != NULL) {
+        previous_profile = previous_plan->network_profile;
     }
 
     /*
@@ -631,17 +559,17 @@ esp_err_t service_runtime_apply_mode(orb_mode_t previous_mode, orb_mode_t target
      * 2) apply service requirements,
      * 3) rollback both profile and requirements on failure.
      */
-    esp_err_t set_profile_err = set_network_profile_guarded(target_profile);
+    esp_err_t set_profile_err = set_network_profile_guarded(target_plan->network_profile);
     if (set_profile_err != ESP_OK) {
         unlock_transition();
         ESP_LOGW(TAG,
                  "network desired profile set failed (target=%s): %s",
-                 network_manager_profile_to_str(target_profile),
+                 network_manager_profile_to_str(target_plan->network_profile),
                  esp_err_to_name(set_profile_err));
         return set_profile_err;
     }
 
-    esp_err_t err = apply_requirements(requirements);
+    esp_err_t err = apply_requirements(target_plan->requirements);
     if (err != ESP_OK) {
         ESP_LOGW(TAG,
                  "apply requirements failed, rolling back to previous mode/runtime: %s",
@@ -663,7 +591,7 @@ esp_err_t service_runtime_apply_mode(orb_mode_t previous_mode, orb_mode_t target
     }
     unlock_transition();
 
-    ESP_LOGI(TAG, "mode requirements applied: mode=%d req=0x%08" PRIx32, (int)target_mode, requirements);
+    ESP_LOGI(TAG, "runtime plan applied: req=0x%08" PRIx32, target_plan->requirements);
     return ESP_OK;
 }
 

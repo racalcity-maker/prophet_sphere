@@ -1,15 +1,11 @@
 #include "rest_api_modules.h"
 
 #include <stdio.h>
-#include "app_fsm.h"
-#include "config_manager.h"
+#include "app_api.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "log_tags.h"
-#include "mode_manager.h"
-#include "network_manager.h"
 #include "rest_api_common.h"
-#include "session_controller.h"
 
 static const char *TAG = LOG_TAG_REST;
 
@@ -20,22 +16,8 @@ static esp_err_t health_handler(httpd_req_t *req)
 
 static esp_err_t status_handler(httpd_req_t *req)
 {
-    orb_runtime_config_t cfg = { 0 };
-    session_info_t session = { 0 };
-    network_status_t net = { 0 };
-    (void)config_manager_get_snapshot(&cfg);
-    (void)session_controller_get_info(&session);
-    (void)network_manager_get_status(&net);
-
-    const char *mode_name = mode_manager_mode_to_str(mode_manager_get_current_mode());
-    const char *fsm_name = app_fsm_state_to_str(app_fsm_get_state());
-    const char *session_state_name = session_controller_state_to_str(session.state);
-    const char *desired_profile_name = network_manager_profile_to_str(net.desired_profile);
-    const char *active_profile_name = network_manager_profile_to_str(net.active_profile);
-    const char *link_state_name = network_manager_link_state_to_str(net.link_state);
-    const char *aura_color = cfg.aura_selected_color[0] == '\0' ? "" : cfg.aura_selected_color;
-    const char *sta_ip = net.sta_ip[0] == '\0' ? "" : net.sta_ip;
-    const char *ap_ip = net.ap_ip[0] == '\0' ? "" : net.ap_ip;
+    app_api_status_snapshot_t status = { 0 };
+    (void)app_api_get_status_snapshot(&status);
 
     esp_err_t buf_err = rest_api_web_buffer_lock();
     if (buf_err != ESP_OK) {
@@ -57,28 +39,28 @@ static esp_err_t status_handler(httpd_req_t *req)
         "\"offline_submode\":\"%s\",\"aura_gap_ms\":%lu,\"aura_selected_color\":\"%s\","
         "\"hybrid_reject_threshold_permille\":%u,\"hybrid_mic_capture_ms\":%lu},"
         "\"network\":{\"up\":%s,\"state\":\"%s\",\"desired\":\"%s\",\"active\":\"%s\",\"sta_ip\":\"%s\",\"ap_ip\":\"%s\"}}",
-        mode_name,
-        fsm_name,
-        (unsigned long)session.session_id,
-        session_state_name,
-        session.active ? "true" : "false",
-        cfg.led_brightness,
-        cfg.audio_volume,
-        cfg.network_enabled ? "true" : "false",
-        cfg.mqtt_enabled ? "true" : "false",
-        cfg.ai_enabled ? "true" : "false",
-        cfg.web_enabled ? "true" : "false",
-        config_manager_offline_submode_to_str(cfg.offline_submode),
-        (unsigned long)cfg.aura_gap_ms,
-        aura_color,
-        (unsigned)cfg.hybrid_reject_threshold_permille,
-        (unsigned long)cfg.hybrid_mic_capture_ms,
-        net.network_up ? "true" : "false",
-        link_state_name,
-        desired_profile_name,
-        active_profile_name,
-        sta_ip,
-        ap_ip);
+        status.mode_name,
+        status.fsm_name,
+        (unsigned long)status.session_id,
+        status.session_state_name,
+        status.session_active ? "true" : "false",
+        status.brightness,
+        status.volume,
+        status.network_enabled ? "true" : "false",
+        status.mqtt_enabled ? "true" : "false",
+        status.ai_enabled ? "true" : "false",
+        status.web_enabled ? "true" : "false",
+        status.offline_submode_name,
+        (unsigned long)status.aura_gap_ms,
+        status.aura_selected_color,
+        (unsigned)status.hybrid_reject_threshold_permille,
+        (unsigned long)status.hybrid_mic_capture_ms,
+        status.network_up ? "true" : "false",
+        status.link_state_name,
+        status.desired_profile_name,
+        status.active_profile_name,
+        status.sta_ip,
+        status.ap_ip);
     if (n <= 0 || (size_t)n >= json_cap) {
         rest_api_web_buffer_unlock();
         return rest_api_send_error_json(req, "500 Internal Server Error", "status_serialize_failed");

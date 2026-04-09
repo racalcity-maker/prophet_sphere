@@ -1,9 +1,9 @@
 idf_component_register(
     SRCS
-        "runtime/app_events.c"
-        "runtime/service_lifecycle_guard.c"
+        "runtime/app_api.c"
+        "runtime/app_media_gateway.c"
         "runtime/app_control_task.c"
-        "runtime/app_tasking.c"
+        "runtime/app_tasking_bootstrap.c"
         "mode/app_fsm.c"
         "mode/mode_manager.c"
         "mode/mode_dispatch_pipeline.c"
@@ -29,6 +29,8 @@ idf_component_register(
     REQUIRES
         freertos
         common
+        control_bus
         modes
         services_config
+        services_network
 )

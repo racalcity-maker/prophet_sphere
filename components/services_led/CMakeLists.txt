@@ -28,7 +28,7 @@ idf_component_register(
         "output"
         "power"
     REQUIRES
-        app_core
+        control_bus
         freertos
         common
         services_config

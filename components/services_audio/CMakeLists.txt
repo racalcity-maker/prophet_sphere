@@ -49,7 +49,7 @@ idf_component_register(
         "third_party/helix"
         "third_party/helix/utils"
     REQUIRES
-        app_core
+        control_bus
         freertos
         common
         bsp

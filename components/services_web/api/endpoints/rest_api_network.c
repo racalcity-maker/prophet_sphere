@@ -2,22 +2,18 @@
 
 #include <stdio.h>
 #include <string.h>
-#include "config_manager.h"
+#include "app_api.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "log_tags.h"
-#include "mode_manager.h"
-#include "network_manager.h"
 #include "rest_api_common.h"
 
 static const char *TAG = LOG_TAG_REST;
 
 static esp_err_t send_network_status(httpd_req_t *req)
 {
-    network_status_t net = { 0 };
-    orb_runtime_config_t cfg = { 0 };
-    (void)network_manager_get_status(&net);
-    (void)config_manager_get_snapshot(&cfg);
+    app_api_network_status_t status = { 0 };
+    (void)app_api_get_network_status(&status);
 
     char json[640];
     (void)snprintf(json,
@@ -31,14 +27,14 @@ static esp_err_t send_network_status(httpd_req_t *req)
                    "\"sta_password_set\":%s,"
                    "\"sta_ip\":\"%s\","
                    "\"ap_ip\":\"%s\"}",
-                   network_manager_profile_to_str(net.desired_profile),
-                   network_manager_profile_to_str(net.active_profile),
-                   network_manager_link_state_to_str(net.link_state),
-                   net.network_up ? "true" : "false",
-                   cfg.wifi_sta_ssid,
-                   (cfg.wifi_sta_password[0] != '\0') ? "true" : "false",
-                   net.sta_ip,
-                   net.ap_ip);
+                   status.desired_profile,
+                   status.active_profile,
+                   status.link_state,
+                   status.network_up ? "true" : "false",
+                   status.sta_ssid,
+                   status.sta_password_set ? "true" : "false",
+                   status.sta_ip,
+                   status.ap_ip);
     return rest_api_send_json(req, "200 OK", json);
 }
 
@@ -49,8 +45,8 @@ static esp_err_t network_status_handler(httpd_req_t *req)
 
 static esp_err_t network_config_handler(httpd_req_t *req)
 {
-    char ssid[ORB_WIFI_SSID_MAX] = { 0 };
-    char password[ORB_WIFI_PASSWORD_MAX] = { 0 };
+    char ssid[APP_API_STA_SSID_MAX] = { 0 };
+    char password[APP_API_STA_PASSWORD_MAX] = { 0 };
     char value[16] = { 0 };
     bool persist = true;
 
@@ -66,13 +62,9 @@ static esp_err_t network_config_handler(httpd_req_t *req)
         }
     }
 
-    esp_err_t err = network_manager_apply_sta_credentials(ssid, password, persist);
+    esp_err_t err = app_api_apply_sta_credentials_and_reconfigure(ssid, password, persist);
     if (err != ESP_OK) {
         return rest_api_send_error_json(req, "500 Internal Server Error", "apply_sta_credentials_failed");
-    }
-    err = mode_manager_request_network_reconfigure();
-    if (err != ESP_OK) {
-        return rest_api_send_error_json(req, "500 Internal Server Error", "network_reconfigure_request_failed");
     }
 
     return send_network_status(req);

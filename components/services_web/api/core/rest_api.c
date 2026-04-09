@@ -1,9 +1,9 @@
 #include "rest_api.h"
 
+#include "app_api.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "log_tags.h"
-#include "mode_manager.h"
 #include "rest_api_common.h"
 #include "rest_api_modules.h"
 
@@ -34,7 +34,7 @@ esp_err_t rest_api_init(void)
 
 esp_err_t rest_api_request_mode_switch(orb_mode_t target_mode)
 {
-    esp_err_t err = mode_manager_request_switch(target_mode);
+    esp_err_t err = app_api_request_mode_switch(target_mode);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "mode switch request failed: %s", esp_err_to_name(err));
         return err;

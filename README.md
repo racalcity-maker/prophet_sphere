@@ -33,7 +33,8 @@ Dependency source of truth:
 
 ## Service Runtime Layer
 - `service_runtime` is the centralized lifecycle orchestrator for shared services.
-- `mode_manager` applies mode requirements through a control-context runtime hook during mode switch.
+- `mode_manager` applies runtime plan through a control-context hook during mode switch.
+- Mode-to-runtime policy (target network profile + service requirements) is resolved in bootstrap policy layer (`main/bootstrap/orb_mode_runtime_policy.c`), not inside `service_runtime`.
 - Shared-service lifecycle states:
   `UNINITIALIZED -> STOPPED -> STARTING -> RUNNING -> STOPPING -> ERROR`.
 - `touch/led/audio` are policy-level always-on shared services and stay running across all modes.
@@ -41,9 +42,14 @@ Dependency source of truth:
 
 ## Component Responsibilities
 - `common`: shared enums, error codes, log tag constants.
+- `control_bus`: cross-component event/command bus (`app_events`, `app_tasking`, queue ownership) and lifecycle guard primitive (`service_lifecycle_guard`).
 - `bsp`: board name/pin abstraction from `CONFIG_*`.
-- `app_core`: events, tasking, FSM, mode manager, session controller, interaction sequence orchestrator.
-- `service_runtime`: mode-driven shared-service start/stop policy and sequencing.
+- `app_core`: FSM, mode manager, session controller, interaction sequence orchestrator, `app_control_task` bootstrap.
+  Also exposes:
+  - `app_api` facade for application-level use-cases
+  - `app_media_gateway` facade for low-level realtime command/media queue operations
+  Current facade-covered web paths include mode switch, network reconfigure/status, and primary `/api/config` apply logic.
+- `service_runtime`: shared-service lifecycle executor (start/stop sequencing + rollback by runtime plan).
 - `services_config`: runtime config snapshot with NVS persistence (`orb_cfg` namespace).
 - `services_touch`: real ESP32-S3 capacitive touch producer task (4 zones) with calibration/filter/debounce.
 - `services_led`: queue-based LED command frontend + `led_task` renderer + WS2812 RMT backend.
@@ -61,7 +67,7 @@ Dependency source of truth:
 - `services_mqtt`: MQTT lifecycle service, posts MQTT command events.
 - `services_ai`: queue-based AI frontend/task + prompt engine.
 - `services_web`: local HTTP server (`esp_http_server`) with queue-safe REST control endpoints.
-  Write-path actions for audio/LED/mic are routed through `app_tasking` command queues (no direct service control from HTTP handlers).
+  Application-level operations are routed through `app_api`; realtime/media command paths are routed through `app_media_gateway` (no direct service control from HTTP handlers).
 - `modes`: offline/hybrid/installation mode implementations behind `app_mode_t`.
   Offline submodes are centralized under `modes/mode_offline_scripted/`:
   `offline_submode_router.c` + one file per submode (`aura`, `lottery`, `prophecy`).
@@ -83,7 +89,13 @@ Dependency source of truth:
   - `services_led/task/led_task_render.c`: framebuffer/palette/overlay/render post-processing
 - Backend adapters stay in dedicated files (for example `audio_output_i2s.c`).
 - Config defaults are separated from runtime config API (`config_defaults.c` vs `config_manager.c`).
-- `app_core` keeps queue/event/FSM/mode/session separation, with `app_control_task` bootstrap split from queue setup.
+- `control_bus` owns queue/event transport; `app_core` owns orchestration bootstrap (`FSM + app_control_task`).
+- `main` bootstrap is split by responsibility:
+  - `orb_bootstrap_init.c` (infra init)
+  - `orb_bootstrap_runtime.c` (mode/runtime hook wiring)
+  - `orb_bootstrap_inputs.c` (buttons/callbacks)
+  - `orb_bootstrap_diag.c` (startup logging/profile)
+  - `orb_mode_runtime_policy.c` (mode -> runtime plan policy)
 - Offline submode logic is no longer mixed in one file:
   `mode_offline_scripted.c` is now a thin entry point, while submode behavior lives in dedicated strategy files.
 

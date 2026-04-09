@@ -1,116 +1,69 @@
-# Oracle: Архитектура и зависимости
+# Oracle Architecture And Dependencies
 
-Актуально для текущего состояния репозитория (ветка `main`).
+Current branch source of truth:
+- Component dependencies: `components/*/CMakeLists.txt`
+- Main app wiring: `main/CMakeLists.txt`
 
-## 1) Слои архитектуры
+## 1) Layering
 
-- `main/app_main.c`: bootstrap, инициализация рантайма, запуск control-task.
-- `app_core`: единая orchestration-точка (events, mode switch, dispatch, session/sequence).
-- `service_runtime`: централизованный lifecycle shared-сервисов по требованиям режима.
-- `services_*`: изолированные владельцы железа/сети/интеграций.
-- `modes`: бизнес-сценарии (`offline_scripted`, `hybrid_ai`, `installation_slave`).
-- `services_web` + portal JS: операторский UI и REST/WS API.
-- `kws/pi_ws`: сервер распознавания/озвучки на Raspberry Pi.
+- `main/app_main.c`: thin entrypoint (`orb_bootstrap_start()`).
+- `main/bootstrap/*`: startup decomposition and mode->runtime policy resolver.
+- `control_bus`: shared command/event transport (`app_tasking`, `app_events`, queue ownership) plus `service_lifecycle_guard`.
+- `app_core`: orchestration only (FSM, mode manager, session/interaction logic, `app_control_task` startup), plus external facades (`app_api`, `app_media_gateway`).
+- `service_runtime`: lifecycle executor for already-resolved runtime plans.
+- `services_*`: hardware/network/integration service owners.
+- `modes`: business scenario logic (`offline_scripted`, `hybrid_ai`, `installation_slave`).
+- `services_web`: local portal + REST/WS surface.
+- `kws/pi_ws`: Raspberry Pi speech server.
 
-## 2) Модель владения (ownership)
+## 2) Ownership Model
 
-- Только `app_control_task` принимает системные решения (mode, session, action routing).
-- Сервисы владеют своим runtime-состоянием через свои task/worker:
+- Only `app_control_task` drives global orchestration/FSM decisions.
+- Services own their runtime state in their own task/worker loops:
   - touch -> `touch_task`
   - led -> `led_task`
   - audio -> `audio_task` + `audio_worker*`
-  - mic -> `mic_task` + `mic_ws_client*`/`mic_task_*`
-- Web/network callbacks не должны напрямую управлять hardware, только через service/app API.
+  - mic -> `mic_task` + `mic_ws_client*`
+- Web/network callbacks are producers only; they do not directly own hardware state.
 
-## 3) Карта зависимостей ESP-IDF компонентов
+## 3) Component Dependency Map
 
-Источник истины: `components/*/CMakeLists.txt`.
+| Component | Responsibility | REQUIRES |
+|---|---|---|
+| `common` | Shared types/enums/log tags | `esp_timer` |
+| `control_bus` | Cross-component event/command bus + lifecycle guard primitive | `freertos`, `common`, `heap` |
+| `app_core` | FSM + mode orchestration + control task bootstrap + external facades (`app_api`, `app_media_gateway`) | `freertos`, `common`, `control_bus`, `modes`, `services_config`, `services_network` |
+| `bsp` | Board pins/buttons abstraction | `common`, `freertos`, `esp_driver_gpio` |
+| `modes` | Mode/submode behavior | `common`, `services_config` |
+| `service_runtime` | Shared-service lifecycle executor (start/stop/rollback for runtime plans) | `freertos`, `common`, `control_bus`, `services_touch`, `services_led`, `services_audio`, `services_mic`, `services_ai`, `services_storage`, `services_network`, `services_mqtt`, `services_web`, `services_ota` |
+| `services_config` | Runtime config + NVS | `freertos`, `common`, `nvs_flash` |
+| `services_touch` | Touch input task/service | `control_bus`, `freertos`, `common`, `driver` |
+| `services_led` | LED task/effects/output | `control_bus`, `freertos`, `common`, `services_config`, `bsp`, `esp_driver_rmt` |
+| `services_audio` | Audio task/worker/mixer/output | `control_bus`, `freertos`, `common`, `bsp`, `services_config`, `services_storage`, `esp_driver_i2s`, `esp_driver_gpio`, `heap` |
+| `services_mic` | Mic capture/ws/tts pipeline | `control_bus`, `freertos`, `common`, `heap`, `esp_driver_i2s`, `esp_event`, `esp_websocket_client` |
+| `services_storage` | SD storage | `common`, `freertos`, `fatfs`, `sdmmc`, `esp_driver_spi`, `esp_system` |
+| `services_network` | Wi-Fi manager/profile/policy | `control_bus`, `common`, `freertos`, `services_config`, `esp_event`, `esp_netif`, `esp_wifi`, `nvs_flash` |
+| `services_mqtt` | MQTT service | `control_bus`, `common`, `freertos` |
+| `services_web` | HTTPS server + REST/portal/talk | `app_core`, `control_bus`, `common`, `freertos`, `services_config`, `services_network`, `esp_http_server`, `esp_https_server`, `esp_http_client`, `esp_timer` |
+| `services_ai` | AI task/client | `control_bus`, `freertos`, `common` |
+| `services_ota` | OTA lifecycle | `freertos`, `common`, `app_update` |
 
-| Компонент | Назначение | REQUIRES | PRIV_REQUIRES |
-|---|---|---|---|
-| `common` | Общие типы, intent/mem monitor | `esp_timer` | - |
-| `app_core` | FSM, mode manager, dispatch, runtime guard | `freertos`, `common`, `modes`, `services_config` | - |
-| `bsp` | Пины/кнопки платы | `common`, `app_core`, `freertos`, `esp_driver_gpio` | - |
-| `modes` | Логика режимов и submode | `common`, `services_config` | - |
-| `service_runtime` | Lifecycle orchestration сервисов | `freertos`, `common`, `app_core`, `services_touch`, `services_led`, `services_audio`, `services_mic`, `services_ai`, `services_storage`, `services_network`, `services_mqtt`, `services_web`, `services_ota` | - |
-| `services_config` | Runtime config + NVS store | `freertos`, `common`, `nvs_flash` | - |
-| `services_touch` | Touch service/task | `app_core`, `freertos`, `common`, `driver` | - |
-| `services_led` | LED service/task/effects/output | `app_core`, `freertos`, `common`, `services_config`, `bsp`, `esp_driver_rmt` | - |
-| `services_audio` | Audio service/task/worker/mixer/bg/codec | `app_core`, `freertos`, `common`, `bsp`, `services_config`, `services_storage`, `esp_driver_i2s`, `esp_driver_gpio`, `heap` | - |
-| `services_mic` | Mic service/task/ws/i2s | `app_core`, `freertos`, `common`, `heap`, `esp_driver_i2s`, `esp_event`, `esp_websocket_client` | - |
-| `services_storage` | SD mount/content index | `common`, `freertos`, `fatfs`, `sdmmc`, `esp_driver_spi`, `esp_system` | - |
-| `services_network` | Wi-Fi profiles/events/policy | `app_core`, `common`, `freertos`, `services_config`, `esp_event`, `esp_netif`, `esp_wifi`, `nvs_flash` | - |
-| `services_mqtt` | MQTT lifecycle | `app_core`, `common`, `freertos` | - |
-| `services_web` | HTTP/HTTPS server, REST, talk WS, portal | `app_core`, `common`, `freertos`, `services_config`, `services_network`, `esp_http_server`, `esp_https_server`, `esp_http_client`, `esp_timer` | - |
-| `services_ai` | AI client/task/prompt | `app_core`, `freertos`, `common` | - |
-| `services_ota` | OTA service | `freertos`, `common`, `app_update` | - |
+`main` currently requires:
+- `nvs_flash`, `bsp`, `common`, `control_bus`, `app_core`, `service_runtime`, `services_config`, `services_web`, `services_ota`.
 
-## 4) Runtime зависимости по режимам
+## 4) Runtime Contract Notes
 
-`service_runtime` применяет требования режима и сериализует transition.
+- `control_bus` owns queue/event transport only.
+- `app_core` owns orchestration bootstrap and runs `app_control_task`.
+- Runtime policy is resolved above `service_runtime` (`main/bootstrap/orb_mode_runtime_policy.c`), then passed down as plan into lifecycle executor.
+- `service_runtime` executes the plan only (set profile + apply requirements + rollback on failure).
+- Web/transport adapters split by intent:
+  - application/use-case path -> `app_api`
+  - low-level realtime/media path -> `app_media_gateway`
 
-- Always-on baseline: `touch`, `led`, `audio`.
-- Optional set по режимам:
-  - `offline_scripted`: `mic`, `storage` + network/web (если профиль сети включен политикой).
-  - `hybrid_ai`: `mic`, `storage` + network/web (если профиль сети включен политикой).
-  - `installation_slave`: `mic`, `storage` + network/web (если профиль сети включен политикой).
+## 5) Quick Change Checklist
 
-Сетевой профиль вычисляется политикой (`services_network`), а не веб-слоем.
-
-## 5) Web/Portal зависимости
-
-- C API слой:
-  - `web/web_server.c`, `web/web_portal.c`
-  - `api/core/*`
-  - `api/endpoints/*`
-  - `api/talk/*`
-- Embedded assets в `services_web/CMakeLists.txt`:
-  - `portal/pages/*.html`
-  - `portal/assets/css/app.css`
-  - `portal/assets/js/core/dom_http.js`
-  - `portal/assets/js/features/*.js`
-  - `portal/assets/js/pages/*.js`
-  - `portal/assets/js/app.js`
-- HTTPS сертификаты:
-  - `components/services_web/certs/servercert.pem`
-  - `components/services_web/certs/prvtkey.pem`
-  - TLS PEM-файлы (`servercert.pem`, `prvtkey.pem`, `ca_cert.pem`, `ca_key.pem`) не должны храниться в git.
-  - Генерация: `python kws/scripts/gen_web_tls_cert.py --cert-dir components/services_web/certs`
-    (также автоматически запускается из CMake configure при отсутствии файлов).
-
-## 6) Внешние зависимости (Raspberry Pi WS сервер)
-
-Базовые Python зависимости (`kws/pi_ws/requirements.txt`):
-
-- `numpy>=1.26`
-- `websockets>=14.0`
-- `vosk>=0.3.45`
-- `omegaconf>=2.3`
-
-Опциональные backend-зависимости:
-
-- `silero`: `torch` (+ модель через `torch.hub`).
-- `piper`: внешний бинарник `piper` + `.onnx` voice model.
-- `yandex`: доступ к облачному API, ключ/токен и folder id.
-- `local llm` (опционально): `llama.cpp` сервер + GGUF модель.
-
-## 7) Конфиги и источники правды
-
-- Сборочные дефолты:
-  - `sdkconfig.defaults` (production baseline)
-  - `sdkconfig.defaults.dev` (dev overlay)
-- Runtime конфиг устройства: NVS (`services_config`).
-- Runtime TTS конфиг сервера: `kws/pi_ws/tts_runtime_config.json`.
-- Текстовый банк oracle v2:
-  - `docs/oracle_texts_jsons/manifest.json`
-  - `docs/oracle_texts_jsons/answers/*`
-  - `docs/oracle_texts_jsons/service/*`
-  - `docs/oracle_texts_jsons/dictionaries/*`
-
-## 8) Быстрая проверка целостности зависимостей
-
-- При добавлении нового cross-component include:
-  1. Обновить `REQUIRES`/`PRIV_REQUIRES` в нужном `CMakeLists.txt`.
-  2. Проверить ownership: новый вызов не должен обходить `app_core`/service API.
-  3. Для web endpoints: убедиться, что не добавляется прямая hardware-логика в HTTP handler.
-  4. Для mode/runtime: изменения должны проходить через `service_runtime` и mode actions.
+1. For new cross-component includes, update `REQUIRES`/`PRIV_REQUIRES` in the component `CMakeLists.txt`.
+2. Keep orchestration decisions in `app_core`, not in service callbacks.
+3. Keep HTTP handlers queue-safe; avoid direct hardware ownership in `services_web`.
+4. For mode/runtime behavior changes, route through `mode_manager` + `service_runtime`.

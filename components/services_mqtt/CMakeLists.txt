@@ -4,7 +4,7 @@ idf_component_register(
     INCLUDE_DIRS
         "include"
     REQUIRES
-        app_core
+        control_bus
         common
         freertos
 )

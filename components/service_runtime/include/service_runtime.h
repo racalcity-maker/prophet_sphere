@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "app_defs.h"
 #include "esp_err.h"
+#include "network_manager.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,11 +52,17 @@ typedef uint32_t service_runtime_requirements_t;
  */
 esp_err_t service_runtime_init(void);
 
+typedef struct {
+    network_profile_t network_profile;
+    service_runtime_requirements_t requirements;
+} service_runtime_mode_plan_t;
+
 /*
- * Control-context API used by mode_manager during mode switch.
- * Applies mode requirements via centralized service lifecycle handling.
+ * Control-context API used by mode/runtime orchestration layer.
+ * Applies already resolved runtime plan. service_runtime does not resolve mode policy.
  */
-esp_err_t service_runtime_apply_mode(orb_mode_t previous_mode, orb_mode_t target_mode);
+esp_err_t service_runtime_apply_plan(const service_runtime_mode_plan_t *previous_plan,
+                                     const service_runtime_mode_plan_t *target_plan);
 
 service_runtime_state_t service_runtime_get_state(service_runtime_id_t service);
 service_runtime_requirements_t service_runtime_get_active_requirements(void);

@@ -11,7 +11,7 @@ idf_component_register(
         "task"
         "prompt"
     REQUIRES
-        app_core
+        control_bus
         freertos
         common
 )

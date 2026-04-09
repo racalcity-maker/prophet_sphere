@@ -4,12 +4,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "app_tasking.h"
-#include "config_manager.h"
+#include "app_media_gateway.h"
+#include "config_schema.h"
 #include "esp_err.h"
 #include "esp_http_server.h"
 #include "sdkconfig.h"
-#include "session_controller.h"
 
 #define TALK_TEXT_MAX_CHARS 320U
 #define TALK_TEXT_ENCODED_MAX_CHARS 2048U

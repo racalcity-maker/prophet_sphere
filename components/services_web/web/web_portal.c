@@ -1,11 +1,11 @@
 #include "web_portal.h"
 
 #include <stddef.h>
+#include "app_api.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "log_tags.h"
-#include "mode_manager.h"
 
 static const char *TAG = LOG_TAG_WEB;
 
@@ -63,22 +63,9 @@ static esp_err_t send_embedded(httpd_req_t *req, const embedded_page_t *page)
     return httpd_resp_send(req, (const char *)page->start, len);
 }
 
-static const char *mode_home_uri(orb_mode_t mode)
-{
-    switch (mode) {
-    case ORB_MODE_HYBRID_AI:
-        return "/hybrid";
-    case ORB_MODE_INSTALLATION_SLAVE:
-        return "/installation";
-    case ORB_MODE_OFFLINE_SCRIPTED:
-    default:
-        return "/offline";
-    }
-}
-
 static esp_err_t root_redirect_handler(httpd_req_t *req)
 {
-    const char *home = mode_home_uri(mode_manager_get_current_mode());
+    const char *home = app_api_mode_home_uri(app_api_get_current_mode());
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", home);
     return httpd_resp_send(req, NULL, 0);
@@ -86,7 +73,7 @@ static esp_err_t root_redirect_handler(httpd_req_t *req)
 
 static esp_err_t mode_redirect_handler(httpd_req_t *req)
 {
-    const char *home = mode_home_uri(mode_manager_get_current_mode());
+    const char *home = app_api_mode_home_uri(app_api_get_current_mode());
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", home);
     return httpd_resp_send(req, NULL, 0);
@@ -120,10 +107,10 @@ static esp_err_t embedded_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    orb_mode_t mode = mode_manager_get_current_mode();
+    orb_mode_t mode = app_api_get_current_mode();
     if (!page_allowed_for_mode(page->page_mode, mode)) {
-        const char *home = mode_home_uri(mode);
-        ESP_LOGI(TAG, "redirect %s -> %s (mode=%s)", req->uri, home, mode_manager_mode_to_str(mode));
+        const char *home = app_api_mode_home_uri(mode);
+        ESP_LOGI(TAG, "redirect %s -> %s (mode=%s)", req->uri, home, app_api_mode_to_str(mode));
         httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Location", home);
         return httpd_resp_send(req, NULL, 0);

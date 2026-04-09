@@ -58,6 +58,7 @@ idf_component_register(
         "api/talk"
     REQUIRES
         app_core
+        control_bus
         common
         freertos
         services_config

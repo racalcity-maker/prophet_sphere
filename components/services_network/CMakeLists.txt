@@ -15,7 +15,7 @@ idf_component_register(
         "events"
         "policy"
     REQUIRES
-        app_core
+        control_bus
         common
         freertos
         services_config

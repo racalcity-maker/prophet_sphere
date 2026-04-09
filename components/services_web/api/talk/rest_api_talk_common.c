@@ -1,6 +1,7 @@
 #include "rest_api_talk_internal.h"
 
 #include <ctype.h>
+#include "app_api.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -11,7 +12,7 @@ static SemaphoreHandle_t s_talk_say_lock;
 
 uint32_t talk_request_timeout_ms(void)
 {
-    return (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
+    return app_media_gateway_queue_timeout_ms();
 }
 
 static uint16_t talk_bg_gain_for_tts(uint16_t configured_gain_permille)
@@ -29,7 +30,7 @@ esp_err_t talk_start_bg_for_say(const orb_runtime_config_t *cfg)
     /* Match hybrid "answer" transition profile for spoken response. */
     cmd.payload.bg_set_gain.fade_ms = TALK_BG_GAIN_SWITCH_FADE_MS;
     cmd.payload.bg_set_gain.gain_permille = talk_bg_gain_for_tts(cfg->prophecy_bg_gain_permille);
-    return app_tasking_send_audio_command(&cmd, talk_request_timeout_ms());
+    return app_media_gateway_send_audio_command(&cmd, talk_request_timeout_ms());
 }
 
 esp_err_t talk_say_lock(void)
@@ -163,8 +164,8 @@ esp_err_t talk_check_busy(bool *busy_out)
     }
     *busy_out = false;
 
-    session_info_t session = { 0 };
-    esp_err_t sess_err = session_controller_get_info(&session);
+    app_api_session_info_t session = { 0 };
+    esp_err_t sess_err = app_api_get_session_info(&session);
     if (sess_err != ESP_OK) {
         return sess_err;
     }

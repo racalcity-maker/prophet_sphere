@@ -3,8 +3,6 @@
 #include <stdbool.h>
 #include <string.h>
 #include "sdkconfig.h"
-#include "app_control_task.h"
-#include "app_fsm.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_memory_utils.h"
@@ -257,12 +255,6 @@ esp_err_t app_tasking_init(void)
     s_ai_cmd_queue = ai_q;
     s_mic_cmd_queue = mic_q;
 
-    esp_err_t err = app_fsm_init();
-    if (err != ESP_OK) {
-        cleanup_queues();
-        return err;
-    }
-
     ESP_LOGI(TAG,
              "queues ready app=%u led=%u audio=%u ai=%u mic=%u",
              (unsigned)CONFIG_ORB_APP_EVENT_QUEUE_LENGTH,
@@ -271,14 +263,6 @@ esp_err_t app_tasking_init(void)
              (unsigned)CONFIG_ORB_AI_COMMAND_QUEUE_LENGTH,
              (unsigned)CONFIG_ORB_MIC_COMMAND_QUEUE_LENGTH);
     return ESP_OK;
-}
-
-esp_err_t app_tasking_start_app_control_task(void)
-{
-    if (s_app_event_queue == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    return app_control_task_start(s_app_event_queue);
 }
 
 esp_err_t app_tasking_post_event(const app_event_t *event, uint32_t timeout_ms)

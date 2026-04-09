@@ -1,0 +1,14 @@
+idf_component_register(
+    SRCS
+        "runtime/app_events.c"
+        "runtime/app_tasking.c"
+        "runtime/service_lifecycle_guard.c"
+    INCLUDE_DIRS
+        "include"
+    PRIV_INCLUDE_DIRS
+        "runtime"
+    REQUIRES
+        freertos
+        common
+        heap
+)

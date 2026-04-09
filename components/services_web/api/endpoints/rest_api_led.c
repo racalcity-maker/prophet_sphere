@@ -1,20 +1,19 @@
 #include "rest_api_modules.h"
 
 #include <stdio.h>
-#include "app_tasking.h"
-#include "config_manager.h"
+#include "app_api.h"
+#include "app_media_gateway.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "log_tags.h"
 #include "rest_api_common.h"
-#include "sdkconfig.h"
 
 static const char *TAG = LOG_TAG_REST;
 
 static uint32_t request_timeout_ms(void)
 {
-    return (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
+    return app_media_gateway_queue_timeout_ms();
 }
 
 static esp_err_t led_scene_handler(httpd_req_t *req)
@@ -42,7 +41,7 @@ static esp_err_t led_scene_handler(httpd_req_t *req)
     cmd.id = LED_CMD_PLAY_SCENE;
     cmd.payload.play_scene.scene_id = scene_id;
     cmd.payload.play_scene.duration_ms = duration_ms;
-    esp_err_t err = app_tasking_send_led_command(&cmd, request_timeout_ms());
+    esp_err_t err = app_media_gateway_send_led_command(&cmd, request_timeout_ms());
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "led scene failed: %s", esp_err_to_name(err));
         return rest_api_send_error_json(req, "500 Internal Server Error", "led_scene_failed");
@@ -72,11 +71,11 @@ static esp_err_t led_brightness_handler(httpd_req_t *req)
     led_command_t cmd = { 0 };
     cmd.id = LED_CMD_SET_BRIGHTNESS;
     cmd.payload.set_brightness.brightness = (uint8_t)value;
-    esp_err_t err = app_tasking_send_led_command(&cmd, request_timeout_ms());
+    esp_err_t err = app_media_gateway_send_led_command(&cmd, request_timeout_ms());
     if (err != ESP_OK) {
         return rest_api_send_error_json(req, "500 Internal Server Error", "led_brightness_failed");
     }
-    (void)config_manager_set_led_brightness((uint8_t)value);
+    (void)app_api_set_led_brightness((uint8_t)value, false);
 
     char json[80];
     (void)snprintf(json, sizeof(json), "{\"ok\":true,\"brightness\":%lu}", (unsigned long)value);
@@ -214,7 +213,7 @@ static esp_err_t led_effect_handler(httpd_req_t *req)
         cmd.payload.set_effect_params.speed = speed;
         cmd.payload.set_effect_params.intensity = intensity;
         cmd.payload.set_effect_params.scale = scale;
-        esp_err_t err = app_tasking_send_led_command(&cmd, request_timeout_ms());
+        esp_err_t err = app_media_gateway_send_led_command(&cmd, request_timeout_ms());
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "led effect params failed: %s", esp_err_to_name(err));
             return rest_api_send_error_json(req, "500 Internal Server Error", "led_effect_params_failed");
@@ -234,7 +233,7 @@ static esp_err_t led_effect_handler(httpd_req_t *req)
         cmd.payload.set_effect_palette.c3_r = c3_r;
         cmd.payload.set_effect_palette.c3_g = c3_g;
         cmd.payload.set_effect_palette.c3_b = c3_b;
-        esp_err_t err = app_tasking_send_led_command(&cmd, request_timeout_ms());
+        esp_err_t err = app_media_gateway_send_led_command(&cmd, request_timeout_ms());
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "led effect palette failed: %s", esp_err_to_name(err));
             return rest_api_send_error_json(req, "500 Internal Server Error", "led_effect_palette_failed");
@@ -246,7 +245,7 @@ static esp_err_t led_effect_handler(httpd_req_t *req)
         cmd.id = LED_CMD_PLAY_SCENE;
         cmd.payload.play_scene.scene_id = scene_id;
         cmd.payload.play_scene.duration_ms = duration_ms;
-        esp_err_t err = app_tasking_send_led_command(&cmd, request_timeout_ms());
+        esp_err_t err = app_media_gateway_send_led_command(&cmd, request_timeout_ms());
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "led effect scene failed: %s", esp_err_to_name(err));
             return rest_api_send_error_json(req, "500 Internal Server Error", "led_effect_scene_failed");

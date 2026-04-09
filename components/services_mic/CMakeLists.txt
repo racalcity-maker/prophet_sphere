@@ -23,7 +23,7 @@ idf_component_register(
         "ws"
         "hal"
     REQUIRES
-        app_core
+        control_bus
         freertos
         common
         heap

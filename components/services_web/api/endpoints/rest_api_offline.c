@@ -4,22 +4,14 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
-#include "app_tasking.h"
-#include "config_manager.h"
+#include "app_api.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "log_tags.h"
-#include "mode_manager.h"
 #include "rest_api_common.h"
 #include "sdkconfig.h"
-#include "session_controller.h"
 
 static const char *TAG = LOG_TAG_REST;
-
-static uint32_t request_timeout_ms(void)
-{
-    return (uint32_t)CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
-}
 
 #ifndef CONFIG_ORB_AUDIO_PROPHECY_BG_WAV_PATH
 #define CONFIG_ORB_AUDIO_PROPHECY_BG_WAV_PATH "/sdcard/audio/backgrounds/oracle.wav"
@@ -170,9 +162,9 @@ static bool parse_lottery_source(const char *text, uint8_t *out_source)
 static esp_err_t send_offline_state(httpd_req_t *req)
 {
     orb_runtime_config_t cfg = { 0 };
-    session_info_t session = { 0 };
-    (void)config_manager_get_snapshot(&cfg);
-    (void)session_controller_get_info(&session);
+    app_api_status_snapshot_t status = { 0 };
+    (void)app_api_get_runtime_config(&cfg);
+    (void)app_api_get_status_snapshot(&status);
 
     esp_err_t buf_err = rest_api_web_buffer_lock();
     if (buf_err != ESP_OK) {
@@ -202,11 +194,11 @@ static esp_err_t send_offline_state(httpd_req_t *req)
         "\"aura\":{\"gap_ms\":%" PRIu32 ",\"intro_dir\":\"%s\",\"response_dir\":\"%s\",\"selected_color\":\"%s\"},"
         "\"lottery\":{\"start_seq\":%" PRIu32 ",\"team_count\":%u,\"participants_total\":%u,"
         "\"finish_source\":\"%s\",\"finish_value\":\"%s\",\"teams\":[",
-        mode_manager_mode_to_str(mode_manager_get_current_mode()),
-        config_manager_offline_submode_to_str(cfg.offline_submode),
-        session.active ? "true" : "false",
-        session_controller_state_to_str(session.state),
-        session.session_id,
+        status.mode_name,
+        app_api_offline_submode_to_str(cfg.offline_submode),
+        status.session_active ? "true" : "false",
+        status.session_state_name,
+        status.session_id,
         cfg.audio_volume,
         CONFIG_ORB_AUDIO_PROPHECY_BG_WAV_PATH,
         (unsigned)cfg.prophecy_bg_gain_permille,
@@ -270,7 +262,7 @@ static esp_err_t send_offline_state(httpd_req_t *req)
 
 static bool ensure_offline_mode(void)
 {
-    return mode_manager_get_current_mode() == ORB_MODE_OFFLINE_SCRIPTED;
+    return app_api_get_current_mode() == ORB_MODE_OFFLINE_SCRIPTED;
 }
 
 static esp_err_t offline_state_handler(httpd_req_t *req)
@@ -290,7 +282,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
     }
 
     orb_runtime_config_t cfg = { 0 };
-    if (config_manager_get_snapshot(&cfg) != ESP_OK) {
+    if (app_api_get_runtime_config(&cfg) != ESP_OK) {
         return rest_api_send_error_json(req, "500 Internal Server Error", "config_snapshot_failed");
     }
     s_offline_form_body[0] = '\0';
@@ -303,10 +295,10 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
     if (rest_api_query_value(req, "submode", value, sizeof(value)) == ESP_OK ||
         rest_api_query_value(req, "offline_submode", value, sizeof(value)) == ESP_OK) {
         orb_offline_submode_t submode = ORB_OFFLINE_SUBMODE_AURA;
-        if (!config_manager_parse_offline_submode(value, &submode)) {
+        if (!app_api_parse_offline_submode(value, &submode)) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_submode");
         }
-        (void)config_manager_set_offline_submode(submode);
+        (void)app_api_set_offline_submode(submode);
         has_any = true;
     }
 
@@ -316,11 +308,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
         if (!rest_api_parse_u32(value, &volume) || volume > 100U) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_fg_volume");
         }
-        (void)config_manager_set_audio_volume((uint8_t)volume);
-        audio_command_t audio_cmd = { 0 };
-        audio_cmd.id = AUDIO_CMD_SET_VOLUME;
-        audio_cmd.payload.set_volume.volume = (uint8_t)volume;
-        (void)app_tasking_send_audio_command(&audio_cmd, request_timeout_ms());
+        (void)app_api_set_audio_volume((uint8_t)volume, true);
         has_any = true;
     }
 
@@ -329,7 +317,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
         if (!rest_api_parse_u32(value, &gap_ms) || gap_ms > 60000U) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_aura_gap_ms");
         }
-        (void)config_manager_set_aura_gap_ms(gap_ms);
+        (void)app_api_set_aura_gap_ms(gap_ms);
         has_any = true;
     }
 
@@ -340,7 +328,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
     if (intro_changed || response_changed) {
         const char *intro = intro_changed ? intro_dir : cfg.aura_intro_dir;
         const char *response = response_changed ? response_dir : cfg.aura_response_dir;
-        if (config_manager_set_aura_directories(intro, response) != ESP_OK) {
+        if (app_api_set_aura_directories(intro, response) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_aura_dirs");
         }
         has_any = true;
@@ -376,7 +364,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
         prophecy_timing_changed = true;
     }
     if (prophecy_timing_changed) {
-        if (config_manager_set_prophecy_timing(gap12_ms, gap23_ms, gap34_ms, leadin_wait_ms) != ESP_OK) {
+        if (app_api_set_prophecy_timing(gap12_ms, gap23_ms, gap34_ms, leadin_wait_ms) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_prophecy_timing");
         }
         cfg.prophecy_gap12_ms = gap12_ms;
@@ -409,7 +397,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
         prophecy_bg_changed = true;
     }
     if (prophecy_bg_changed) {
-        if (config_manager_set_prophecy_background((uint16_t)bg_gain_u32, bg_fade_in_ms, bg_fade_out_ms) != ESP_OK) {
+        if (app_api_set_prophecy_background((uint16_t)bg_gain_u32, bg_fade_in_ms, bg_fade_out_ms) != ESP_OK) {
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_prophecy_background");
         }
         cfg.prophecy_bg_gain_permille = (uint16_t)bg_gain_u32;
@@ -570,7 +558,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
                  (unsigned)(lottery_finish_source_set ? 1U : 0U),
                  lottery_finish_value,
                  (unsigned)(lottery_finish_value_set ? 1U : 0U));
-        if (config_manager_set_offline_lottery_settings(
+        if (app_api_set_offline_lottery_settings(
                 lottery_team_count,
                 lottery_participants_total,
                 cfg.offline_lottery_teams,
@@ -599,7 +587,7 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
         }
     }
     if (persist) {
-        (void)config_manager_save();
+        (void)app_api_save_runtime_config();
     }
 
     if (!has_any) {
@@ -621,11 +609,11 @@ static esp_err_t offline_submode_handler(httpd_req_t *req)
     }
 
     orb_offline_submode_t submode = ORB_OFFLINE_SUBMODE_AURA;
-    if (!config_manager_parse_offline_submode(value, &submode)) {
+    if (!app_api_parse_offline_submode(value, &submode)) {
         return rest_api_send_error_json(req, "400 Bad Request", "invalid_submode_name");
     }
 
-    esp_err_t err = config_manager_set_offline_submode(submode);
+    esp_err_t err = app_api_set_offline_submode(submode);
     if (err != ESP_OK) {
         return rest_api_send_error_json(req, "500 Internal Server Error", "set_submode_failed");
     }
@@ -646,25 +634,23 @@ static esp_err_t offline_action_handler(httpd_req_t *req)
 
     if (strcmp(value, "lottery_start") == 0) {
         orb_offline_submode_t submode = ORB_OFFLINE_SUBMODE_AURA;
-        if (config_manager_get_offline_submode(&submode) != ESP_OK) {
+        if (app_api_get_offline_submode(&submode) != ESP_OK) {
             return rest_api_send_error_json(req, "500 Internal Server Error", "offline_submode_read_failed");
         }
         if (submode != ORB_OFFLINE_SUBMODE_LOTTERY) {
             /* Keep lottery start resilient: auto-switch submode instead of rejecting. */
-            if (config_manager_set_offline_submode(ORB_OFFLINE_SUBMODE_LOTTERY) != ESP_OK) {
+            if (app_api_set_offline_submode(ORB_OFFLINE_SUBMODE_LOTTERY) != ESP_OK) {
                 return rest_api_send_error_json(req, "500 Internal Server Error", "lottery_submode_switch_failed");
             }
         }
-        if (config_manager_request_offline_lottery_start() != ESP_OK) {
+        if (app_api_request_offline_lottery_start() != ESP_OK) {
             return rest_api_send_error_json(req, "500 Internal Server Error", "lottery_start_request_failed");
         }
         return rest_api_send_json(req, "200 OK", "{\"ok\":true,\"action\":\"lottery_start\"}");
     }
 
     if (strcmp(value, "audio_stop") == 0) {
-        audio_command_t audio_cmd = { 0 };
-        audio_cmd.id = AUDIO_CMD_STOP;
-        if (app_tasking_send_audio_command(&audio_cmd, request_timeout_ms()) != ESP_OK) {
+        if (app_api_audio_stop() != ESP_OK) {
             return rest_api_send_error_json(req, "500 Internal Server Error", "audio_stop_failed");
         }
         return rest_api_send_json(req, "200 OK", "{\"ok\":true,\"action\":\"audio_stop\"}");

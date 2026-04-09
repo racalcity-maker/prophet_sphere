@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include "app_api.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "log_tags.h"
@@ -13,13 +14,13 @@ static const char *TAG = LOG_TAG_REST;
 static esp_err_t talk_say_send_pcm_start(uint32_t timeout_ms)
 {
     audio_command_t cmd = { .id = AUDIO_CMD_PCM_STREAM_START };
-    return app_tasking_send_audio_command(&cmd, timeout_ms);
+    return app_media_gateway_send_audio_command(&cmd, timeout_ms);
 }
 
 static esp_err_t talk_say_send_pcm_stop(uint32_t timeout_ms)
 {
     audio_command_t cmd = { .id = AUDIO_CMD_PCM_STREAM_STOP };
-    return app_tasking_send_audio_command(&cmd, timeout_ms);
+    return app_media_gateway_send_audio_command(&cmd, timeout_ms);
 }
 
 static esp_err_t talk_say_enqueue_tts_play(const char *text,
@@ -46,7 +47,7 @@ static esp_err_t talk_say_enqueue_tts_play(const char *text,
     (void)snprintf(cmd.payload.tts_play.text, sizeof(cmd.payload.tts_play.text), "%s", text);
     cmd.payload.tts_play.timeout_ms = stream_timeout_ms;
     cmd.payload.tts_play.bg_fade_out_ms = bg_fade_out_ms;
-    return app_tasking_send_mic_command(&cmd, queue_timeout_ms);
+    return app_media_gateway_send_mic_command(&cmd, queue_timeout_ms);
 #endif
 }
 
@@ -152,7 +153,7 @@ esp_err_t talk_say_handler(httpd_req_t *req)
 
     if (with_bg) {
         orb_runtime_config_t cfg = { 0 };
-        if (config_manager_get_snapshot(&cfg) != ESP_OK) {
+        if (app_api_get_runtime_config(&cfg) != ESP_OK) {
             ret = rest_api_send_error_json(req, "500 Internal Server Error", "config_read_failed");
             goto cleanup;
         }

@@ -2,10 +2,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "app_api.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "log_tags.h"
-#include "mode_manager.h"
 #include "rest_api.h"
 #include "rest_api_common.h"
 
@@ -43,7 +43,7 @@ static esp_err_t mode_switch_handler(httpd_req_t *req)
         return rest_api_send_error_json(req, "400 Bad Request", "invalid_mode");
     }
 
-    const orb_mode_t current = mode_manager_get_current_mode();
+    const orb_mode_t current = app_api_get_current_mode();
     /* Offline portal must not switch away from offline.
      * AP transport is mode-scoped and dropping it mid-session breaks UX. */
     if (current == ORB_MODE_OFFLINE_SCRIPTED && target != ORB_MODE_OFFLINE_SCRIPTED) {
@@ -56,7 +56,7 @@ static esp_err_t mode_switch_handler(httpd_req_t *req)
     }
 
     char json[160];
-    (void)snprintf(json, sizeof(json), "{\"ok\":true,\"requested_mode\":\"%s\"}", mode_manager_mode_to_str(target));
+    (void)snprintf(json, sizeof(json), "{\"ok\":true,\"requested_mode\":\"%s\"}", app_api_mode_to_str(target));
     return rest_api_send_json(req, "200 OK", json);
 }
 
