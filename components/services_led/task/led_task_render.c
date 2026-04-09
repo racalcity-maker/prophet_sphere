@@ -97,6 +97,12 @@ void led_task_apply_effect_palette(led_runtime_t *runtime)
     if (runtime == NULL || runtime->effect_palette_mode == LED_PALETTE_MODE_RAINBOW) {
         return;
     }
+    if (runtime->scene_id == LED_SCENE_AURA_COLOR_BREATHE ||
+        runtime->scene_id == LED_SCENE_LOTTERY_IDLE ||
+        runtime->scene_id == LED_SCENE_LOTTERY_HOLD_RAMP ||
+        runtime->scene_id == LED_SCENE_LOTTERY_TEAM_COLOR) {
+        return;
+    }
 
     for (uint32_t i = 0; i < LED_FRAMEBUFFER_BYTES; i += 3U) {
         uint8_t src_r = s_framebuffer[i + 0U];
@@ -304,6 +310,11 @@ void led_task_apply_touch_overlay(led_runtime_t *runtime, uint32_t now_ms)
     if (runtime == NULL) {
         return;
     }
+    if (runtime->scene_id == LED_SCENE_LOTTERY_IDLE ||
+        runtime->scene_id == LED_SCENE_LOTTERY_HOLD_RAMP ||
+        runtime->scene_id == LED_SCENE_LOTTERY_TEAM_COLOR) {
+        return;
+    }
 
     for (uint32_t zone_id = 0; zone_id < LED_TOUCH_ZONE_COUNT; ++zone_id) {
         uint8_t intensity = zone_overlay_intensity(&runtime->touch_zone[zone_id], now_ms);
@@ -349,6 +360,11 @@ void led_task_apply_audio_reactive_gain(led_runtime_t *runtime, uint32_t now_ms)
     return;
 #else
     if (runtime == NULL || !runtime->audio_reactive_active) {
+        return;
+    }
+    if (runtime->scene_id == LED_SCENE_LOTTERY_IDLE ||
+        runtime->scene_id == LED_SCENE_LOTTERY_HOLD_RAMP ||
+        runtime->scene_id == LED_SCENE_LOTTERY_TEAM_COLOR) {
         return;
     }
     if ((now_ms - runtime->audio_reactive_last_update_ms) > CONFIG_ORB_LED_AUDIO_REACTIVE_TIMEOUT_MS) {

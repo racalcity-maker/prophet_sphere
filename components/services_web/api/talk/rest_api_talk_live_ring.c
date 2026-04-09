@@ -1,4 +1,7 @@
 #include "rest_api_talk_internal.h"
+#include "rest_api_talk_live_buffer.h"
+#include "rest_api_talk_live_postfx.h"
+#include "rest_api_talk_live_runtime.h"
 
 #if ORB_TALK_WS_ENABLED
 #include <inttypes.h>
@@ -9,7 +12,6 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/idf_additions.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "log_tags.h"
@@ -20,25 +22,13 @@ static const char *TAG = LOG_TAG_REST;
 
 #if ORB_TALK_WS_ENABLED
 typedef struct {
-    bool has_last_sample;
-    int16_t last_sample;
-    int32_t dc_prev_x;
-    int32_t dc_prev_y;
-} talk_live_postfx_state_t;
-
-typedef struct {
     SemaphoreHandle_t lock;
     esp_timer_handle_t watchdog;
     bool websocket_open;
     bool pcm_stream_active;
     int sockfd;
     int64_t last_chunk_ms;
-    int16_t *ring_samples;
-    uint32_t ring_capacity_samples;
-    uint32_t ring_write_pos;
-    uint32_t ring_read_pos;
-    uint32_t ring_count;
-    uint32_t ring_dropped_samples;
+    talk_live_buffer_t ring;
     uint32_t rx_chunks;
     uint32_t rx_samples;
     int64_t rx_diag_last_ms;
@@ -54,12 +44,14 @@ static talk_live_state_t s_live = {
     .pcm_stream_active = false,
     .sockfd = -1,
     .last_chunk_ms = 0,
-    .ring_samples = NULL,
-    .ring_capacity_samples = 0U,
-    .ring_write_pos = 0U,
-    .ring_read_pos = 0U,
-    .ring_count = 0U,
-    .ring_dropped_samples = 0U,
+    .ring = {
+        .samples = NULL,
+        .capacity_samples = 0U,
+        .write_pos = 0U,
+        .read_pos = 0U,
+        .count = 0U,
+        .dropped_samples = 0U,
+    },
     .rx_chunks = 0U,
     .rx_samples = 0U,
     .rx_diag_last_ms = 0,
@@ -124,135 +116,6 @@ static esp_err_t talk_live_send_pcm_chunk(const int16_t *samples, uint16_t sampl
     return app_tasking_send_audio_command(&cmd, timeout_ms);
 }
 
-static inline int16_t talk_live_clamp_i16(int32_t v)
-{
-    if (v > 32767) {
-        return 32767;
-    }
-    if (v < -32768) {
-        return -32768;
-    }
-    return (int16_t)v;
-}
-
-static void talk_live_postfx_reset_locked(void)
-{
-    s_live.postfx.has_last_sample = false;
-    s_live.postfx.last_sample = 0;
-    s_live.postfx.dc_prev_x = 0;
-    s_live.postfx.dc_prev_y = 0;
-}
-
-static int16_t talk_live_postfx_soft_limit(int32_t x)
-{
-    int32_t ax = (x < 0) ? -x : x;
-    if (ax <= TALK_LIVE_POSTFX_LIMITER_THRESHOLD) {
-        return talk_live_clamp_i16(x);
-    }
-    int32_t over = ax - TALK_LIVE_POSTFX_LIMITER_THRESHOLD;
-    int32_t comp = TALK_LIVE_POSTFX_LIMITER_THRESHOLD;
-    comp += (int32_t)(((int64_t)over * (int64_t)TALK_LIVE_POSTFX_LIMITER_KNEE) /
-                      (int64_t)(TALK_LIVE_POSTFX_LIMITER_KNEE + over));
-    if (comp > 32767) {
-        comp = 32767;
-    }
-    return (x < 0) ? (int16_t)(-comp) : (int16_t)comp;
-}
-
-static void talk_live_postfx_apply_inplace_locked(int16_t *samples, uint32_t sample_count)
-{
-    if (samples == NULL || sample_count == 0U) {
-        return;
-    }
-
-    if (s_live.postfx.has_last_sample) {
-        int32_t first = (int32_t)samples[0];
-        int32_t prev = (int32_t)s_live.postfx.last_sample;
-        int32_t jump = first - prev;
-        if (jump < 0) {
-            jump = -jump;
-        }
-        if (jump >= TALK_LIVE_POSTFX_DECLICK_THRESHOLD) {
-            uint32_t ramp_n = sample_count;
-            if (ramp_n > TALK_LIVE_POSTFX_DECLICK_RAMP_SAMPLES) {
-                ramp_n = TALK_LIVE_POSTFX_DECLICK_RAMP_SAMPLES;
-            }
-            for (uint32_t i = 0U; i < ramp_n; ++i) {
-                int32_t target = (int32_t)samples[i];
-                int32_t mixed = prev + (int32_t)(((int64_t)(target - prev) * (int64_t)(i + 1U)) / (int64_t)ramp_n);
-                samples[i] = talk_live_clamp_i16(mixed);
-            }
-        }
-    }
-
-    int32_t prev_x = s_live.postfx.dc_prev_x;
-    int32_t prev_y = s_live.postfx.dc_prev_y;
-    for (uint32_t i = 0U; i < sample_count; ++i) {
-        int32_t x = (int32_t)samples[i];
-        int32_t y = (x - prev_x) +
-                    (int32_t)(((int64_t)TALK_LIVE_POSTFX_DC_BETA_Q15 * (int64_t)prev_y) >> 15);
-        prev_x = x;
-        prev_y = y;
-        samples[i] = talk_live_postfx_soft_limit(y);
-    }
-
-    s_live.postfx.dc_prev_x = prev_x;
-    s_live.postfx.dc_prev_y = prev_y;
-    s_live.postfx.last_sample = samples[sample_count - 1U];
-    s_live.postfx.has_last_sample = true;
-}
-
-static void talk_live_ring_reset_locked(void)
-{
-    s_live.ring_write_pos = 0U;
-    s_live.ring_read_pos = 0U;
-    s_live.ring_count = 0U;
-}
-
-static uint32_t talk_live_ring_push_locked(const int16_t *samples, uint32_t sample_count)
-{
-    if (samples == NULL || sample_count == 0U || s_live.ring_samples == NULL || s_live.ring_capacity_samples == 0U) {
-        return 0U;
-    }
-
-    uint32_t accepted = 0U;
-    while (accepted < sample_count) {
-        if (s_live.ring_count >= s_live.ring_capacity_samples) {
-            s_live.ring_dropped_samples += (sample_count - accepted);
-            break;
-        }
-        s_live.ring_samples[s_live.ring_write_pos] = samples[accepted];
-        s_live.ring_write_pos++;
-        if (s_live.ring_write_pos >= s_live.ring_capacity_samples) {
-            s_live.ring_write_pos = 0U;
-        }
-        s_live.ring_count++;
-        accepted++;
-    }
-    return accepted;
-}
-
-static uint16_t talk_live_ring_pop_locked(int16_t *out_samples, uint16_t max_samples)
-{
-    if (out_samples == NULL || max_samples == 0U || s_live.ring_samples == NULL || s_live.ring_capacity_samples == 0U) {
-        return 0U;
-    }
-    uint32_t to_copy = s_live.ring_count;
-    if (to_copy > max_samples) {
-        to_copy = max_samples;
-    }
-    uint16_t copied = 0U;
-    while (copied < to_copy) {
-        out_samples[copied++] = s_live.ring_samples[s_live.ring_read_pos];
-        s_live.ring_read_pos++;
-        if (s_live.ring_read_pos >= s_live.ring_capacity_samples) {
-            s_live.ring_read_pos = 0U;
-        }
-        s_live.ring_count--;
-    }
-    return copied;
-}
-
 static void talk_live_feeder_task(void *arg)
 {
     (void)arg;
@@ -288,14 +151,14 @@ static void talk_live_feeder_task(void *arg)
             continue;
         }
 
-        if (s_live.websocket_open && !s_live.pcm_stream_active && s_live.ring_count >= TALK_LIVE_PREBUFFER_SAMPLES) {
+        if (s_live.websocket_open && !s_live.pcm_stream_active && s_live.ring.count >= TALK_LIVE_PREBUFFER_SAMPLES) {
             s_live.pcm_stream_active = true;
             need_start = true;
-            buffered_samples = s_live.ring_count;
+            buffered_samples = s_live.ring.count;
         }
 
         if (s_live.pcm_stream_active) {
-            chunk_samples = talk_live_ring_pop_locked(chunk, AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES);
+            chunk_samples = talk_live_buffer_pop(&s_live.ring, chunk, AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES);
             if (chunk_samples == 0U && !s_live.websocket_open) {
                 s_live.pcm_stream_active = false;
                 need_stop = true;
@@ -312,8 +175,8 @@ static void talk_live_feeder_task(void *arg)
                     s_live.websocket_open = false;
                     s_live.pcm_stream_active = false;
                     s_live.sockfd = -1;
-                    talk_live_ring_reset_locked();
-                    talk_live_postfx_reset_locked();
+                    talk_live_buffer_reset(&s_live.ring);
+                    talk_live_postfx_reset(&s_live.postfx);
                     talk_live_unlock();
                 }
             } else {
@@ -365,9 +228,9 @@ static void talk_live_watchdog_cb(void *arg)
         s_live.pcm_stream_active = false;
         s_live.websocket_open = false;
         s_live.sockfd = -1;
-        talk_live_ring_reset_locked();
-        talk_live_postfx_reset_locked();
-        s_live.ring_dropped_samples = 0U;
+        talk_live_buffer_reset(&s_live.ring);
+        talk_live_postfx_reset(&s_live.postfx);
+        s_live.ring.dropped_samples = 0U;
     }
     xSemaphoreGive(s_live.lock);
 
@@ -392,78 +255,31 @@ esp_err_t talk_live_init(void)
     }
     talk_live_unlock();
 
-    if (s_live.watchdog == NULL) {
-        const esp_timer_create_args_t timer_args = {
-            .callback = talk_live_watchdog_cb,
-            .arg = NULL,
-            .name = "talk_live_wd",
-            .dispatch_method = ESP_TIMER_TASK,
-            .skip_unhandled_events = true,
-        };
-        ESP_RETURN_ON_ERROR(esp_timer_create(&timer_args, &s_live.watchdog), TAG, "live watchdog create failed");
-        ESP_RETURN_ON_ERROR(esp_timer_start_periodic(s_live.watchdog, TALK_LIVE_WATCHDOG_PERIOD_MS * 1000ULL),
+    ESP_RETURN_ON_ERROR(talk_live_runtime_ensure_watchdog(&s_live.watchdog,
+                                                          talk_live_watchdog_cb,
+                                                          "talk_live_wd",
+                                                          TALK_LIVE_WATCHDOG_PERIOD_MS),
+                        TAG,
+                        "live watchdog start failed");
+
+    if (s_live.ring.samples == NULL) {
+        s_live.ring.capacity_samples = TALK_LIVE_RING_CAPACITY_SAMPLES;
+        ESP_RETURN_ON_ERROR(talk_live_runtime_alloc_ring_samples(&s_live.ring.samples, s_live.ring.capacity_samples),
                             TAG,
-                            "live watchdog start failed");
+                            "live ring alloc failed");
+        talk_live_buffer_reset(&s_live.ring);
+        talk_live_postfx_reset(&s_live.postfx);
+        s_live.ring.dropped_samples = 0U;
     }
 
-    if (s_live.ring_samples == NULL) {
-        s_live.ring_capacity_samples = TALK_LIVE_RING_CAPACITY_SAMPLES;
-        s_live.ring_samples = (int16_t *)heap_caps_malloc((size_t)s_live.ring_capacity_samples * sizeof(int16_t),
-                                                          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (s_live.ring_samples == NULL) {
-            s_live.ring_samples = (int16_t *)heap_caps_malloc((size_t)s_live.ring_capacity_samples * sizeof(int16_t),
-                                                              MALLOC_CAP_8BIT);
-        }
-        if (s_live.ring_samples == NULL) {
-            return ESP_ERR_NO_MEM;
-        }
-        talk_live_ring_reset_locked();
-        talk_live_postfx_reset_locked();
-        s_live.ring_dropped_samples = 0U;
-    }
-
-    if (s_live.feeder_task == NULL) {
-        BaseType_t ok = pdFAIL;
-        s_live.feeder_stack_psram = false;
-#if CONFIG_SPIRAM_USE_MALLOC
-#if CONFIG_FREERTOS_UNICORE
-        ok = xTaskCreateWithCaps(talk_live_feeder_task,
-                                 "talk_live_feed",
-                                 TALK_LIVE_FEED_TASK_STACK,
-                                 NULL,
-                                 TALK_LIVE_FEED_TASK_PRIORITY,
-                                 &s_live.feeder_task,
-                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-        ok = xTaskCreatePinnedToCoreWithCaps(talk_live_feeder_task,
-                                             "talk_live_feed",
-                                             TALK_LIVE_FEED_TASK_STACK,
-                                             NULL,
-                                             TALK_LIVE_FEED_TASK_PRIORITY,
-                                             &s_live.feeder_task,
-                                             tskNO_AFFINITY,
-                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
-        if (ok == pdPASS && s_live.feeder_task != NULL) {
-            s_live.feeder_stack_psram = true;
-        } else {
-            s_live.feeder_task = NULL;
-        }
-#endif
-        if (ok != pdPASS || s_live.feeder_task == NULL) {
-            s_live.feeder_stack_psram = false;
-            ok = xTaskCreatePinnedToCore(talk_live_feeder_task,
-                                         "talk_live_feed",
-                                         TALK_LIVE_FEED_TASK_STACK,
-                                         NULL,
-                                         TALK_LIVE_FEED_TASK_PRIORITY,
-                                         &s_live.feeder_task,
-                                         tskNO_AFFINITY);
-        }
-        if (ok != pdPASS || s_live.feeder_task == NULL) {
-            return ESP_ERR_NO_MEM;
-        }
-    }
+    ESP_RETURN_ON_ERROR(talk_live_runtime_ensure_feeder_task(&s_live.feeder_task,
+                                                             &s_live.feeder_stack_psram,
+                                                             talk_live_feeder_task,
+                                                             "talk_live_feed",
+                                                             TALK_LIVE_FEED_TASK_STACK,
+                                                             TALK_LIVE_FEED_TASK_PRIORITY),
+                        TAG,
+                        "live feeder start failed");
     return ESP_OK;
 #endif
 }
@@ -494,8 +310,8 @@ esp_err_t talk_live_stop_if_owner(int sockfd, bool close_socket_state)
     if (s_live.sockfd == sockfd || s_live.sockfd < 0) {
         should_stop = s_live.pcm_stream_active;
         s_live.pcm_stream_active = false;
-        talk_live_ring_reset_locked();
-        talk_live_postfx_reset_locked();
+        talk_live_buffer_reset(&s_live.ring);
+        talk_live_postfx_reset(&s_live.postfx);
         if (close_socket_state) {
             s_live.websocket_open = false;
             s_live.sockfd = -1;
@@ -524,12 +340,12 @@ esp_err_t talk_live_mark_open(int sockfd)
     s_live.pcm_stream_active = false;
     s_live.sockfd = sockfd;
     s_live.last_chunk_ms = esp_timer_get_time() / 1000LL;
-    s_live.ring_dropped_samples = 0U;
+    s_live.ring.dropped_samples = 0U;
     s_live.rx_chunks = 0U;
     s_live.rx_samples = 0U;
     s_live.rx_diag_last_ms = 0;
-    talk_live_ring_reset_locked();
-    talk_live_postfx_reset_locked();
+    talk_live_buffer_reset(&s_live.ring);
+    talk_live_postfx_reset(&s_live.postfx);
     talk_live_unlock();
     return ESP_OK;
 }
@@ -568,10 +384,10 @@ esp_err_t talk_live_send_pcm_chunk_bytes(uint8_t *data, size_t len)
     uint32_t abs_avg = 0U;
 
     ESP_RETURN_ON_ERROR(talk_live_lock(), TAG, "live lock failed");
-    talk_live_postfx_apply_inplace_locked(in_samples, sample_total);
-    uint32_t accepted = talk_live_ring_push_locked(in_samples, sample_total);
+    talk_live_postfx_apply_inplace(&s_live.postfx, in_samples, sample_total);
+    uint32_t accepted = talk_live_buffer_push(&s_live.ring, in_samples, sample_total);
     uint32_t dropped = sample_total - accepted;
-    uint32_t dropped_total = s_live.ring_dropped_samples;
+    uint32_t dropped_total = s_live.ring.dropped_samples;
     s_live.rx_chunks++;
     s_live.rx_samples += sample_total;
     if ((now_ms - s_live.rx_diag_last_ms) >= 1000LL) {

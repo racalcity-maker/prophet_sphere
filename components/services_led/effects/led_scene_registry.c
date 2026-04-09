@@ -77,6 +77,8 @@ const char *led_scene_name(led_scene_id_t scene_id)
         return "hybrid_wled_pinwheel";
     case LED_SCENE_HYBRID_WLED_COMET:
         return "hybrid_wled_comet";
+    case LED_SCENE_LOTTERY_TEAM_COLOR:
+        return "lottery_team_color";
     default:
         return "unknown_scene";
     }
@@ -122,6 +124,7 @@ bool led_scene_is_known(led_scene_id_t scene_id)
     case LED_SCENE_HYBRID_WLED_HEARTBEAT:
     case LED_SCENE_HYBRID_WLED_PINWHEEL:
     case LED_SCENE_HYBRID_WLED_COMET:
+    case LED_SCENE_LOTTERY_TEAM_COLOR:
         return true;
     default:
         return false;

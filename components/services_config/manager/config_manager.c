@@ -117,6 +117,82 @@ static bool hybrid_effect_palette_mode_valid(uint8_t palette_mode)
     return palette_mode <= (uint8_t)ORB_LED_PALETTE_MODE_TRIO;
 }
 
+static bool lottery_team_source_valid(uint8_t source)
+{
+    return source <= (uint8_t)ORB_LOTTERY_TEAM_SOURCE_TTS;
+}
+
+static size_t bounded_strnlen_local(const char *value, size_t max_len)
+{
+    if (value == NULL) {
+        return 0U;
+    }
+    size_t n = 0U;
+    while (n < max_len && value[n] != '\0') {
+        n++;
+    }
+    return n;
+}
+
+static bool lottery_finish_value_valid(const char *value)
+{
+    if (value == NULL) {
+        return false;
+    }
+    return bounded_strnlen_local(value, ORB_CONFIG_PATH_MAX) < ORB_CONFIG_PATH_MAX;
+}
+
+static bool lottery_team_count_valid(uint8_t team_count)
+{
+    return team_count >= 2U && team_count <= ORB_LOTTERY_MAX_TEAMS;
+}
+
+static bool lottery_participants_total_valid(uint16_t participants_total)
+{
+    return participants_total >= 1U && participants_total <= ORB_LOTTERY_PARTICIPANTS_MAX;
+}
+
+static bool lottery_team_item_valid(const orb_lottery_team_config_t *team)
+{
+    if (team == NULL) {
+        return false;
+    }
+    if (!lottery_team_source_valid(team->source)) {
+        return false;
+    }
+    if (team->track_path[sizeof(team->track_path) - 1U] != '\0') {
+        return false;
+    }
+    if (team->tts_text[sizeof(team->tts_text) - 1U] != '\0') {
+        return false;
+    }
+    return true;
+}
+
+static bool lottery_settings_valid(uint8_t team_count,
+                                   uint16_t participants_total,
+                                   const orb_lottery_team_config_t *teams,
+                                   size_t teams_count,
+                                   uint8_t finish_source,
+                                   const char *finish_value)
+{
+    if (!lottery_team_count_valid(team_count) || !lottery_participants_total_valid(participants_total)) {
+        return false;
+    }
+    if (teams == NULL || teams_count != ORB_LOTTERY_MAX_TEAMS) {
+        return false;
+    }
+    if (!lottery_team_source_valid(finish_source) || !lottery_finish_value_valid(finish_value)) {
+        return false;
+    }
+    for (size_t i = 0U; i < teams_count; ++i) {
+        if (!lottery_team_item_valid(&teams[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool wifi_sta_credentials_valid(const char *ssid, const char *password)
 {
     if (ssid == NULL || ssid[0] == '\0' || password == NULL) {
@@ -188,7 +264,7 @@ esp_err_t config_manager_init(void)
         }
     }
 
-    s_snapshot = config_defaults_load();
+    config_defaults_load(&s_snapshot);
 
     bool loaded_from_nvs = false;
     esp_err_t load_err = config_store_nvs_load(&s_snapshot, &loaded_from_nvs);
@@ -210,40 +286,39 @@ esp_err_t config_manager_init(void)
     if (!hybrid_effect_palette_mode_valid(s_snapshot.hybrid_effect_palette_mode)) {
         s_snapshot.hybrid_effect_palette_mode = (uint8_t)ORB_LED_PALETTE_MODE_RAINBOW;
     }
+    if (!lottery_team_count_valid(s_snapshot.offline_lottery_team_count)) {
+        s_snapshot.offline_lottery_team_count = 4U;
+    }
+    if (!lottery_participants_total_valid(s_snapshot.offline_lottery_participants_total)) {
+        s_snapshot.offline_lottery_participants_total = 17U;
+    }
+    for (size_t i = 0U; i < ORB_LOTTERY_MAX_TEAMS; ++i) {
+        if (!lottery_team_source_valid(s_snapshot.offline_lottery_teams[i].source)) {
+            s_snapshot.offline_lottery_teams[i].source = (uint8_t)ORB_LOTTERY_TEAM_SOURCE_TRACK;
+        }
+        s_snapshot.offline_lottery_teams[i].track_path[sizeof(s_snapshot.offline_lottery_teams[i].track_path) - 1U] = '\0';
+        s_snapshot.offline_lottery_teams[i].tts_text[sizeof(s_snapshot.offline_lottery_teams[i].tts_text) - 1U] = '\0';
+    }
+    if (!lottery_team_source_valid(s_snapshot.offline_lottery_finish_source)) {
+        s_snapshot.offline_lottery_finish_source = (uint8_t)ORB_LOTTERY_TEAM_SOURCE_TRACK;
+    }
+    s_snapshot.offline_lottery_finish_value[sizeof(s_snapshot.offline_lottery_finish_value) - 1U] = '\0';
 
     ESP_LOGI(TAG,
-             "runtime config source=%s volume=%u brightness=%u net=%d mqtt=%d ai=%d web=%d submode=%s "
-             "aura_gap=%" PRIu32 " prophecy_gap=[%" PRIu32 ",%" PRIu32 ",%" PRIu32 "] hybrid_mic_ms=%" PRIu32 " "
-             "hybrid_fx(idle=%" PRIu32 " talk=%" PRIu32 " speed=%u intensity=%u scale=%u palette=%u "
-             "c1=(%u,%u,%u) c2=(%u,%u,%u) c3=(%u,%u,%u))",
+             "runtime config source=%s vol=%u bri=%u submode=%s net=%d mqtt=%d ai=%d web=%d "
+             "aura_gap=%" PRIu32 " hybrid_mic_ms=%" PRIu32 " fx_idle=%" PRIu32 " fx_talk=%" PRIu32,
              loaded_from_nvs ? "nvs" : "defaults",
              (unsigned)s_snapshot.audio_volume,
              (unsigned)s_snapshot.led_brightness,
+             config_manager_offline_submode_to_str(s_snapshot.offline_submode),
              s_snapshot.network_enabled,
              s_snapshot.mqtt_enabled,
              s_snapshot.ai_enabled,
              s_snapshot.web_enabled,
-             config_manager_offline_submode_to_str(s_snapshot.offline_submode),
              s_snapshot.aura_gap_ms,
-             s_snapshot.prophecy_gap12_ms,
-             s_snapshot.prophecy_gap23_ms,
-             s_snapshot.prophecy_gap34_ms,
              s_snapshot.hybrid_mic_capture_ms,
              s_snapshot.hybrid_effect_idle_scene_id,
-             s_snapshot.hybrid_effect_talk_scene_id,
-             (unsigned)s_snapshot.hybrid_effect_speed,
-             (unsigned)s_snapshot.hybrid_effect_intensity,
-             (unsigned)s_snapshot.hybrid_effect_scale,
-             (unsigned)s_snapshot.hybrid_effect_palette_mode,
-             (unsigned)s_snapshot.hybrid_effect_color1_r,
-             (unsigned)s_snapshot.hybrid_effect_color1_g,
-             (unsigned)s_snapshot.hybrid_effect_color1_b,
-             (unsigned)s_snapshot.hybrid_effect_color2_r,
-             (unsigned)s_snapshot.hybrid_effect_color2_g,
-             (unsigned)s_snapshot.hybrid_effect_color2_b,
-             (unsigned)s_snapshot.hybrid_effect_color3_r,
-             (unsigned)s_snapshot.hybrid_effect_color3_g,
-             (unsigned)s_snapshot.hybrid_effect_color3_b);
+             s_snapshot.hybrid_effect_talk_scene_id);
     return ESP_OK;
 }
 
@@ -257,6 +332,125 @@ esp_err_t config_manager_get_snapshot(orb_runtime_config_t *snapshot)
         return err;
     }
     *snapshot = s_snapshot;
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
+esp_err_t config_manager_get_led_brightness(uint8_t *brightness)
+{
+    if (brightness == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *brightness = s_snapshot.led_brightness;
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
+esp_err_t config_manager_get_aura_gap_ms(uint32_t *gap_ms)
+{
+    if (gap_ms == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *gap_ms = s_snapshot.aura_gap_ms;
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
+esp_err_t config_manager_get_offline_submode(orb_offline_submode_t *submode)
+{
+    if (submode == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *submode = s_snapshot.offline_submode;
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
+esp_err_t config_manager_get_offline_lottery_start_seq(uint32_t *start_seq)
+{
+    if (start_seq == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *start_seq = s_snapshot.offline_lottery_start_seq;
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
+esp_err_t config_manager_get_offline_lottery_params(uint8_t *team_count, uint16_t *participants_total)
+{
+    if (team_count == NULL || participants_total == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *team_count = s_snapshot.offline_lottery_team_count;
+    *participants_total = s_snapshot.offline_lottery_participants_total;
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
+esp_err_t config_manager_get_offline_lottery_team(uint8_t index, orb_lottery_team_config_t *team)
+{
+    if (team == NULL || index >= ORB_LOTTERY_MAX_TEAMS) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *team = s_snapshot.offline_lottery_teams[index];
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
+esp_err_t config_manager_get_offline_lottery_finish(uint8_t *source, char *value, size_t value_len)
+{
+    if (source == NULL || value == NULL || value_len == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *source = s_snapshot.offline_lottery_finish_source;
+    size_t src_len = bounded_strnlen_local(s_snapshot.offline_lottery_finish_value, sizeof(s_snapshot.offline_lottery_finish_value));
+    size_t copy_len = (src_len < (value_len - 1U)) ? src_len : (value_len - 1U);
+    if (copy_len > 0U) {
+        memcpy(value, s_snapshot.offline_lottery_finish_value, copy_len);
+    }
+    value[copy_len] = '\0';
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
+esp_err_t config_manager_get_hybrid_effect_idle_scene_id(uint32_t *scene_id)
+{
+    if (scene_id == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *scene_id = s_snapshot.hybrid_effect_idle_scene_id;
     xSemaphoreGive(s_cfg_mutex);
     return ESP_OK;
 }
@@ -324,6 +518,38 @@ esp_err_t config_manager_request_offline_lottery_start(void)
     s_snapshot.offline_lottery_start_seq++;
     xSemaphoreGive(s_cfg_mutex);
     return ESP_OK;
+}
+
+esp_err_t config_manager_set_offline_lottery_settings(uint8_t team_count,
+                                                      uint16_t participants_total,
+                                                      const orb_lottery_team_config_t *teams,
+                                                      size_t teams_count,
+                                                      uint8_t finish_source,
+                                                      const char *finish_value)
+{
+    if (!lottery_settings_valid(team_count, participants_total, teams, teams_count, finish_source, finish_value)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+    s_snapshot.offline_lottery_team_count = team_count;
+    s_snapshot.offline_lottery_participants_total = participants_total;
+    for (size_t i = 0U; i < ORB_LOTTERY_MAX_TEAMS; ++i) {
+        s_snapshot.offline_lottery_teams[i] = teams[i];
+        s_snapshot.offline_lottery_teams[i].track_path[sizeof(s_snapshot.offline_lottery_teams[i].track_path) - 1U] = '\0';
+        s_snapshot.offline_lottery_teams[i].tts_text[sizeof(s_snapshot.offline_lottery_teams[i].tts_text) - 1U] = '\0';
+    }
+    s_snapshot.offline_lottery_finish_source = finish_source;
+    size_t finish_len = bounded_strnlen_local(finish_value, ORB_CONFIG_PATH_MAX - 1U);
+    if (finish_len > 0U) {
+        memcpy(s_snapshot.offline_lottery_finish_value, finish_value, finish_len);
+    }
+    s_snapshot.offline_lottery_finish_value[finish_len] = '\0';
+    err = save_snapshot_unsafe();
+    xSemaphoreGive(s_cfg_mutex);
+    return err;
 }
 
 esp_err_t config_manager_set_aura_gap_ms(uint32_t gap_ms)
@@ -529,6 +755,31 @@ esp_err_t config_manager_set_wifi_sta_credentials(const char *ssid, const char *
     return err;
 }
 
+esp_err_t config_manager_get_wifi_sta_credentials(char *ssid,
+                                                  size_t ssid_len,
+                                                  char *password,
+                                                  size_t pass_len)
+{
+    if ((ssid == NULL && password == NULL) || (ssid != NULL && ssid_len == 0U) || (password != NULL && pass_len == 0U)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = lock_cfg();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (ssid != NULL) {
+        strlcpy(ssid, s_snapshot.wifi_sta_ssid, ssid_len);
+    }
+    if (password != NULL) {
+        strlcpy(password, s_snapshot.wifi_sta_password, pass_len);
+    }
+
+    xSemaphoreGive(s_cfg_mutex);
+    return ESP_OK;
+}
+
 esp_err_t config_manager_has_persisted_wifi_sta_credentials(bool *has_credentials)
 {
     return config_store_nvs_has_wifi_sta_credentials(has_credentials);
@@ -552,7 +803,7 @@ esp_err_t config_manager_reload(void)
         return err;
     }
 
-    s_snapshot = config_defaults_load();
+    config_defaults_load(&s_snapshot);
     bool loaded = false;
     err = config_store_nvs_load(&s_snapshot, &loaded);
     if (err == ESP_ERR_INVALID_VERSION) {
@@ -570,7 +821,7 @@ esp_err_t config_manager_reset_to_defaults(bool persist)
         return err;
     }
 
-    s_snapshot = config_defaults_load();
+    config_defaults_load(&s_snapshot);
     if (persist) {
         err = save_snapshot_unsafe();
     } else {

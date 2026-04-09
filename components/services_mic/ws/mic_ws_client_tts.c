@@ -113,13 +113,13 @@ esp_err_t mic_ws_client_tts_play(const char *text,
     portEXIT_CRITICAL(&g_mic_ws_lock);
 
     if (!reuse_connection && !mic_ws_wait_connected(client, CONFIG_ORB_MIC_WS_CONNECT_TIMEOUT_MS)) {
-        mic_ws_client_abort();
+        mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_TTS_TIMEOUT);
         return ESP_ERR_TIMEOUT;
     }
 
     esp_err_t err = mic_ws_send_tts_request(client, text, sample_rate_hz);
     if (err != ESP_OK) {
-        mic_ws_client_abort();
+        mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_TTS_REQUEST_SEND_FAIL);
         return err;
     }
 
@@ -150,7 +150,7 @@ esp_err_t mic_ws_client_tts_play(const char *text,
                          wall_ms,
                          snapshot.frames,
                          snapshot.bytes);
-                mic_ws_client_abort();
+                mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_TTS_PROTOCOL_FAIL);
                 return ESP_ERR_INVALID_RESPONSE;
             }
             ESP_LOGI(TAG,
@@ -164,7 +164,7 @@ esp_err_t mic_ws_client_tts_play(const char *text,
                      snapshot.dropped,
                      snapshot.boundary_jumps,
                      snapshot.boundary_jump_max);
-            mic_ws_client_abort();
+            mic_ws_client_close_current_session(MIC_WS_CLOSE_REASON_TTS_DONE);
             return ESP_OK;
         }
 
@@ -174,7 +174,7 @@ esp_err_t mic_ws_client_tts_play(const char *text,
                      "mic ws tts no first audio chunk within %" PRIu32 "ms (waited=%" PRIu32 "ms), abort",
                      (uint32_t)CONFIG_ORB_MIC_WS_TTS_FIRST_CHUNK_TIMEOUT_MS,
                      wait_ms);
-            mic_ws_client_abort();
+            mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_TTS_FIRST_CHUNK_TIMEOUT);
             return ESP_ERR_TIMEOUT;
         }
 
@@ -189,7 +189,7 @@ esp_err_t mic_ws_client_tts_play(const char *text,
                      snapshot.dropped,
                      snapshot.boundary_jumps,
                      snapshot.boundary_jump_max);
-            mic_ws_client_abort();
+            mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_TTS_TIMEOUT);
             return ESP_ERR_TIMEOUT;
         }
 
@@ -206,7 +206,9 @@ esp_err_t mic_ws_client_tts_play(const char *text,
                  snapshot.dropped,
                  snapshot.boundary_jumps,
                  snapshot.boundary_jump_max);
-        mic_ws_client_abort();
+        mic_ws_client_fail_current_session((term == MIC_WS_TTS_TERM_DISCONNECTED)
+                                               ? MIC_WS_CLOSE_REASON_TTS_DISCONNECTED
+                                               : MIC_WS_CLOSE_REASON_TTS_REMOTE_FAILED);
         return ESP_FAIL;
     }
 }

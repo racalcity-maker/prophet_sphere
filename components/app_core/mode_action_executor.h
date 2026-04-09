@@ -23,7 +23,6 @@ typedef struct {
 
 esp_err_t mode_action_executor_init(mode_action_executor_t *executor);
 void mode_action_executor_reset(mode_action_executor_t *executor);
-esp_err_t mode_action_executor_prepare_for_mode_switch(mode_action_executor_t *executor, mode_timers_t *timers);
 esp_err_t mode_action_executor_before_second_hook(mode_action_executor_t *executor,
                                                   uint32_t second_asset_id,
                                                   uint32_t gap_ms);

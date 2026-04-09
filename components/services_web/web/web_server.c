@@ -133,11 +133,13 @@ esp_err_t web_server_start(void)
     cfg.httpd.server_port = (uint16_t)CONFIG_ORB_WEB_PORT;
     cfg.port_secure = (uint16_t)CONFIG_ORB_WEB_PORT;
     cfg.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;
-    cfg.httpd.max_open_sockets = 3;
-    cfg.httpd.backlog_conn = 2;
+    /* Browser may open several parallel HTTPS connections for portal assets.
+     * Too small socket pool with LRU purge can reset active asset requests. */
+    cfg.httpd.max_open_sockets = 5;
+    cfg.httpd.backlog_conn = 5;
     cfg.httpd.max_uri_handlers = (uint16_t)CONFIG_ORB_WEB_MAX_URI_HANDLERS;
     cfg.httpd.stack_size = (uint16_t)CONFIG_ORB_WEB_SERVER_STACK_SIZE;
-    cfg.httpd.lru_purge_enable = true;
+    cfg.httpd.lru_purge_enable = false;
     cfg.servercert = _binary_servercert_pem_start;
     cfg.servercert_len = (size_t)(_binary_servercert_pem_end - _binary_servercert_pem_start);
     cfg.prvtkey_pem = _binary_prvtkey_pem_start;

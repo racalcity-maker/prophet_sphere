@@ -25,8 +25,9 @@ extern "C" {
 typedef enum {
     LED_CMD_NONE = 0,
     LED_CMD_PLAY_SCENE,
-    LED_CMD_STOP,
-    LED_CMD_SET_BRIGHTNESS,
+    LED_CMD_CLEAR, /* content clear/idle command; does not stop led task lifecycle */
+    /* 3 was legacy LED_CMD_STOP (removed); keep gap to avoid old-id remap */
+    LED_CMD_SET_BRIGHTNESS = 4,
     LED_CMD_SET_EFFECT_PARAMS,
     LED_CMD_SET_EFFECT_PALETTE,
     LED_CMD_TOUCH_ZONE_SET,

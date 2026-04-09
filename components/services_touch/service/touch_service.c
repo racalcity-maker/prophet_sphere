@@ -135,3 +135,32 @@ esp_err_t touch_service_get_zone_channels(touch_hw_channel_t channels[TOUCH_ZONE
     }
     return ESP_OK;
 }
+
+esp_err_t touch_service_get_runtime_config(touch_runtime_config_t *out_config)
+{
+    return touch_task_get_runtime_config(out_config);
+}
+
+esp_err_t touch_service_apply_runtime_config(const touch_runtime_config_t *config,
+                                             bool recalibrate_now,
+                                             touch_reconfig_scope_t *out_scope)
+{
+    if (out_scope != NULL) {
+        *out_scope = TOUCH_RECONFIG_SCOPE_HOT_APPLY;
+    }
+    esp_err_t err = touch_task_apply_runtime_config(config, recalibrate_now);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "touch runtime config applied scope=hot recalibrate=%d", recalibrate_now ? 1 : 0);
+    }
+    return err;
+}
+
+esp_err_t touch_service_request_recalibration(void)
+{
+    touch_runtime_config_t cfg = { 0 };
+    esp_err_t err = touch_task_get_runtime_config(&cfg);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return touch_task_apply_runtime_config(&cfg, true);
+}

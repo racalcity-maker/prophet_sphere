@@ -1,10 +1,7 @@
 #include "led_service.h"
 
-#include "sdkconfig.h"
 #include "app_tasking.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "led_output_ws2812.h"
 #include "led_task.h"
 #include "log_tags.h"
@@ -42,8 +39,6 @@ esp_err_t led_service_stop_task(void)
         ESP_LOGE(TAG, "led stop denied: lifecycle is owned by service_runtime");
         return ESP_ERR_INVALID_STATE;
     }
-    (void)led_service_stop(CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS);
-    vTaskDelay(pdMS_TO_TICKS(20));
     return led_task_stop();
 }
 
@@ -56,10 +51,16 @@ esp_err_t led_service_play_scene(led_scene_id_t scene_id, uint32_t duration_ms, 
     return app_tasking_send_led_command(&cmd, timeout_ms);
 }
 
+esp_err_t led_service_clear(uint32_t timeout_ms)
+{
+    led_command_t cmd = { .id = LED_CMD_CLEAR };
+    return app_tasking_send_led_command(&cmd, timeout_ms);
+}
+
 esp_err_t led_service_stop(uint32_t timeout_ms)
 {
-    led_command_t cmd = { .id = LED_CMD_STOP };
-    return app_tasking_send_led_command(&cmd, timeout_ms);
+    /* Backward-compatible API name: semantic is content clear, not task lifecycle stop. */
+    return led_service_clear(timeout_ms);
 }
 
 esp_err_t led_service_set_brightness(led_brightness_t brightness, uint32_t timeout_ms)

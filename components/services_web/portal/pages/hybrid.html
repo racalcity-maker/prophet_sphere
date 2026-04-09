@@ -337,18 +337,45 @@
             </label>
         </div>
         <div class="grid-two">
-            <label>Color 1
-                <input id="mode-hybrid-effect-color1" type="color" value="#ff00b4">
+            <label>Color 1 (Primary)
+                <div class="color-control">
+                    <input id="mode-hybrid-effect-color1" type="color" value="#ff00b4">
+                    <input id="mode-hybrid-effect-color1-hex" type="text" maxlength="7" value="#ff00b4" placeholder="#RRGGBB">
+                </div>
             </label>
-            <label>Color 2
-                <input id="mode-hybrid-effect-color2" type="color" value="#00e6ff">
+            <label>Color 2 (Secondary)
+                <div class="color-control">
+                    <input id="mode-hybrid-effect-color2" type="color" value="#00e6ff">
+                    <input id="mode-hybrid-effect-color2-hex" type="text" maxlength="7" value="#00e6ff" placeholder="#RRGGBB">
+                </div>
             </label>
         </div>
         <div class="grid-two" id="mode-hybrid-effect-color3-row">
-            <label>Color 3
-                <input id="mode-hybrid-effect-color3" type="color" value="#ffbe28">
+            <label>Color 3 (Accent)
+                <div class="color-control">
+                    <input id="mode-hybrid-effect-color3" type="color" value="#ffbe28">
+                    <input id="mode-hybrid-effect-color3-hex" type="text" maxlength="7" value="#ffbe28" placeholder="#RRGGBB">
+                </div>
             </label>
             <label></label>
+        </div>
+        <div class="palette-preview" id="mode-hybrid-effect-palette-preview"></div>
+        <div class="palette-legend">
+            <div class="palette-legend-item">
+                <span class="palette-dot" id="mode-hybrid-effect-dot1"></span>
+                <span>Primary</span>
+                <code id="mode-hybrid-effect-hex1">#ff00b4</code>
+            </div>
+            <div class="palette-legend-item">
+                <span class="palette-dot" id="mode-hybrid-effect-dot2"></span>
+                <span>Secondary</span>
+                <code id="mode-hybrid-effect-hex2">#00e6ff</code>
+            </div>
+            <div class="palette-legend-item" id="mode-hybrid-effect-legend3">
+                <span class="palette-dot" id="mode-hybrid-effect-dot3"></span>
+                <span>Accent</span>
+                <code id="mode-hybrid-effect-hex3">#ffbe28</code>
+            </div>
         </div>
         <div id="mode-hybrid-effect-params-block">
             <div class="grid-two">
@@ -384,9 +411,12 @@
     </section>
 </div>
 <script src="/assets/js/core/dom_http.js?v=20260406-core-1"></script>
-<script src="/assets/js/features/hybrid_effects.js?v=20260406-fx-2"></script>
+<script src="/assets/js/features/hybrid_effects.js?v=20260406-fx-3"></script>
 <script src="/assets/js/features/talk.js?v=20260406-talk-1"></script>
-<script src="/assets/js/features/server_tts.js?v=20260406-tts-1"></script>
-<script src="/assets/js/app.js?v=20260406-split-1"></script>
+<script src="/assets/js/features/server_tts.js?v=20260406-tts-2"></script>
+<script src="/assets/js/pages/page_offline.js?v=20260406-pages-1"></script>
+<script src="/assets/js/pages/network_setup_page.js?v=20260406-pages-3"></script>
+<script src="/assets/js/pages/page_mode_generic.js?v=20260406-pages-1"></script>
+<script src="/assets/js/app.js?v=20260406-split-2"></script>
 </body>
 </html>

@@ -162,7 +162,7 @@ config ORB_AUDIO_MP3_READ_CHUNK_SIZE
 
 config ORB_AUDIO_TEST_TONE_ENABLE
     bool "Enable test tone generator in simulated playback"
-    default y
+    default n
 
 config ORB_AUDIO_TEST_TONE_FREQ_HZ
     int "Test tone frequency (Hz)"

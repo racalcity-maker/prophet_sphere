@@ -563,7 +563,7 @@ void mic_task_tts_pipeline_play(uint32_t capture_id,
     uint32_t total_ms = (uint32_t)((xTaskGetTickCount() - tts_start_tick) * portTICK_PERIOD_MS);
 
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "tts test failed: %s total=%" PRIu32 "ms first_chunk=%u",
+        ESP_LOGW(TAG, "tts stream playback failed: %s total=%" PRIu32 "ms first_chunk=%u",
                  esp_err_to_name(err),
                  total_ms,
                  stats.first_chunk_logged ? 1U : 0U);
@@ -571,7 +571,7 @@ void mic_task_tts_pipeline_play(uint32_t capture_id,
     } else {
         uint32_t audio_ms_equiv = (uint32_t)(((uint64_t)stats.total_samples * 1000ULL) /
                                              (uint64_t)CONFIG_ORB_AUDIO_I2S_SAMPLE_RATE_HZ);
-        ESP_LOGI(TAG, "tts play done total=%" PRIu32 "ms chunks=%" PRIu32 " audio_ms=%" PRIu32,
+        ESP_LOGI(TAG, "tts stream playback done total=%" PRIu32 "ms chunks=%" PRIu32 " audio_ms=%" PRIu32,
                  total_ms,
                  stats.chunk_count,
                  audio_ms_equiv);

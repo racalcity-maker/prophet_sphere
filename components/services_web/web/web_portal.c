@@ -42,6 +42,12 @@ extern const uint8_t _binary_talk_js_start[] asm("_binary_talk_js_start");
 extern const uint8_t _binary_talk_js_end[] asm("_binary_talk_js_end");
 extern const uint8_t _binary_server_tts_js_start[] asm("_binary_server_tts_js_start");
 extern const uint8_t _binary_server_tts_js_end[] asm("_binary_server_tts_js_end");
+extern const uint8_t _binary_page_offline_js_start[] asm("_binary_page_offline_js_start");
+extern const uint8_t _binary_page_offline_js_end[] asm("_binary_page_offline_js_end");
+extern const uint8_t _binary_network_setup_page_js_start[] asm("_binary_network_setup_page_js_start");
+extern const uint8_t _binary_network_setup_page_js_end[] asm("_binary_network_setup_page_js_end");
+extern const uint8_t _binary_page_mode_generic_js_start[] asm("_binary_page_mode_generic_js_start");
+extern const uint8_t _binary_page_mode_generic_js_end[] asm("_binary_page_mode_generic_js_end");
 
 static esp_err_t send_embedded(httpd_req_t *req, const embedded_page_t *page)
 {
@@ -177,6 +183,21 @@ esp_err_t web_portal_register_http_handlers(httpd_handle_t server)
           .content_type = "application/javascript; charset=utf-8",
           .start = _binary_server_tts_js_start,
           .end = _binary_server_tts_js_end,
+          .page_mode = PAGE_MODE_ANY },
+        { .uri = "/assets/js/pages/page_offline.js",
+          .content_type = "application/javascript; charset=utf-8",
+          .start = _binary_page_offline_js_start,
+          .end = _binary_page_offline_js_end,
+          .page_mode = PAGE_MODE_ANY },
+        { .uri = "/assets/js/pages/network_setup_page.js",
+          .content_type = "application/javascript; charset=utf-8",
+          .start = _binary_network_setup_page_js_start,
+          .end = _binary_network_setup_page_js_end,
+          .page_mode = PAGE_MODE_ANY },
+        { .uri = "/assets/js/pages/page_mode_generic.js",
+          .content_type = "application/javascript; charset=utf-8",
+          .start = _binary_page_mode_generic_js_start,
+          .end = _binary_page_mode_generic_js_end,
           .page_mode = PAGE_MODE_ANY },
     };
 

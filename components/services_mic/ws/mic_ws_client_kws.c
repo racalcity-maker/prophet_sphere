@@ -47,14 +47,14 @@ esp_err_t mic_ws_client_session_start(uint32_t capture_id, uint32_t sample_rate_
         }
 
         if (!esp_websocket_client_is_connected(client)) {
-            mic_ws_client_abort();
+            mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_SESSION_RESTART);
             return ESP_ERR_TIMEOUT;
         }
     }
 
     esp_err_t err = mic_ws_send_start_frame(client, capture_id, sample_rate_hz);
     if (err != ESP_OK) {
-        mic_ws_client_abort();
+        mic_ws_client_fail_current_session(MIC_WS_CLOSE_REASON_KWS_START_FAIL);
         return err;
     }
 
@@ -181,11 +181,7 @@ esp_err_t mic_ws_client_take_result(uint32_t capture_id,
         if (ready && (result_capture_id == capture_id || result_capture_id == 0U)) {
             *out_intent = intent_id;
             *out_confidence_permille = conf;
-            portENTER_CRITICAL(&g_mic_ws_lock);
-            g_mic_ws.kws.result_ready = false;
-            g_mic_ws.kws.session_active = false;
-            g_mic_ws.kws.start_sent = false;
-            portEXIT_CRITICAL(&g_mic_ws_lock);
+            mic_ws_client_close_current_session(MIC_WS_CLOSE_REASON_KWS_DONE);
             return ESP_OK;
         }
 

@@ -13,6 +13,9 @@
 
 static const char *TAG = LOG_TAG_AUDIO;
 
+/* Local state shorthands (kept file-local on purpose). */
+#define s_bg (state->bg)
+
 static uint16_t read_le16(const uint8_t *p)
 {
     return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
@@ -23,18 +26,24 @@ static uint32_t read_le32(const uint8_t *p)
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8U) | ((uint32_t)p[2] << 16U) | ((uint32_t)p[3] << 24U);
 }
 
-void audio_worker_bg_reset_state(void)
+void audio_worker_bg_reset_state(audio_worker_shared_state_t *state)
 {
+    if (state == NULL) {
+        return;
+    }
     memset(&s_bg, 0, sizeof(s_bg));
 }
 
-void audio_worker_bg_close(void)
+void audio_worker_bg_close(audio_worker_shared_state_t *state)
 {
+    if (state == NULL) {
+        return;
+    }
     if (s_bg.file != NULL) {
         (void)fclose(s_bg.file);
         s_bg.file = NULL;
     }
-    audio_worker_bg_reset_state();
+    audio_worker_bg_reset_state(state);
 }
 
 static bool bg_parse_wav_header(FILE *file,
@@ -137,8 +146,11 @@ static bool bg_parse_wav_header(FILE *file,
     return true;
 }
 
-esp_err_t audio_worker_bg_start(uint32_t fade_in_ms, uint16_t gain_permille)
+esp_err_t audio_worker_bg_start(audio_worker_shared_state_t *state, uint32_t fade_in_ms, uint16_t gain_permille)
 {
+    if (state == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (gain_permille == 0U) {
         gain_permille = (uint16_t)CONFIG_ORB_AUDIO_PROPHECY_BG_GAIN_PERMILLE;
     }
@@ -165,7 +177,7 @@ esp_err_t audio_worker_bg_start(uint32_t fade_in_ms, uint16_t gain_permille)
         return ESP_FAIL;
     }
 
-    audio_worker_bg_close();
+    audio_worker_bg_close(state);
     s_bg.file = f;
     s_bg.data_offset = data_offset;
     s_bg.data_size_bytes = data_size;
@@ -188,8 +200,14 @@ esp_err_t audio_worker_bg_start(uint32_t fade_in_ms, uint16_t gain_permille)
     return ESP_OK;
 }
 
-void audio_worker_bg_begin_fade(uint16_t target_gain_permille, uint32_t fade_ms, bool post_done_event)
+void audio_worker_bg_begin_fade(audio_worker_shared_state_t *state,
+                                uint16_t target_gain_permille,
+                                uint32_t fade_ms,
+                                bool post_done_event)
 {
+    if (state == NULL) {
+        return;
+    }
     if (!s_bg.active) {
         return;
     }
@@ -215,8 +233,11 @@ void audio_worker_bg_begin_fade(uint16_t target_gain_permille, uint32_t fade_ms,
     }
 }
 
-size_t audio_worker_bg_read_samples(int16_t *out_samples, size_t sample_count)
+size_t audio_worker_bg_read_samples(audio_worker_shared_state_t *state, int16_t *out_samples, size_t sample_count)
 {
+    if (state == NULL) {
+        return 0U;
+    }
     if (!s_bg.active || s_bg.file == NULL || out_samples == NULL || sample_count == 0U) {
         return 0U;
     }
@@ -226,7 +247,7 @@ size_t audio_worker_bg_read_samples(int16_t *out_samples, size_t sample_count)
         if (s_bg.data_pos_bytes >= s_bg.data_size_bytes) {
             if (fseek(s_bg.file, (long)s_bg.data_offset, SEEK_SET) != 0) {
                 ESP_LOGW(TAG, "background rewind failed");
-                audio_worker_bg_close();
+                audio_worker_bg_close(state);
                 break;
             }
             s_bg.data_pos_bytes = 0U;
@@ -237,7 +258,7 @@ size_t audio_worker_bg_read_samples(int16_t *out_samples, size_t sample_count)
         if (samples_left == 0U) {
             if (fseek(s_bg.file, (long)s_bg.data_offset, SEEK_SET) != 0) {
                 ESP_LOGW(TAG, "background rewind failed");
-                audio_worker_bg_close();
+                audio_worker_bg_close(state);
                 break;
             }
             s_bg.data_pos_bytes = 0U;
@@ -249,7 +270,7 @@ size_t audio_worker_bg_read_samples(int16_t *out_samples, size_t sample_count)
         size_t got = fread(&out_samples[total], sizeof(int16_t), chunk, s_bg.file);
         if (got == 0U) {
             ESP_LOGW(TAG, "background read failed");
-            audio_worker_bg_close();
+            audio_worker_bg_close(state);
             break;
         }
 
@@ -259,8 +280,11 @@ size_t audio_worker_bg_read_samples(int16_t *out_samples, size_t sample_count)
     return total;
 }
 
-void audio_worker_bg_update_fade(size_t consumed_samples)
+void audio_worker_bg_update_fade(audio_worker_shared_state_t *state, size_t consumed_samples)
 {
+    if (state == NULL) {
+        return;
+    }
     if (!s_bg.active || !s_bg.fade_active || consumed_samples == 0U) {
         return;
     }
@@ -290,7 +314,7 @@ void audio_worker_bg_update_fade(size_t consumed_samples)
 
     if (!s_bg.fade_active && s_bg.gain_permille == 0U) {
         bool post_done = s_bg.fade_post_done_event;
-        audio_worker_bg_close();
+        audio_worker_bg_close(state);
         if (post_done) {
             (void)audio_worker_post_audio_done(0U, (int32_t)APP_AUDIO_DONE_CODE_BG_FADE_COMPLETE);
         }

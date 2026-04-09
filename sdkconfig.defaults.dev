@@ -1,0 +1,13 @@
+# Development overlay defaults (use on top of sdkconfig.defaults)
+# Example:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.dev" reconfigure
+
+CONFIG_ORB_ENABLE_MQTT=y
+CONFIG_ORB_ENABLE_AI=y
+CONFIG_ORB_ENABLE_OTA=y
+
+CONFIG_ORB_AUDIO_TEST_TONE_ENABLE=y
+
+CONFIG_ORB_TOUCH_ONLY_LOG_MODE=y
+CONFIG_ORB_MEM_MONITOR_ENABLE=y
+

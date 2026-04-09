@@ -1,5 +1,6 @@
 #include "config_store_nvs.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include "nvs.h"
 #include "sdkconfig.h"
@@ -12,7 +13,7 @@
 #define CONFIG_ORB_CONFIG_NVS_NAMESPACE "orb_cfg"
 #endif
 
-#define ORB_CFG_NVS_VERSION 7U
+#define ORB_CFG_NVS_VERSION 9U
 
 static const char *KEY_VER = "ver";
 static const char *KEY_LED_BRIGHTNESS = "led_bri";
@@ -50,6 +51,16 @@ static const char *KEY_PROPHECY_BG_FADE_IN_MS = "p_bfi";
 static const char *KEY_PROPHECY_BG_FADE_OUT_MS = "p_bfo";
 static const char *KEY_WIFI_STA_SSID = "w_ssid";
 static const char *KEY_WIFI_STA_PASSWORD = "w_pass";
+static const char *KEY_LOTTERY_TEAM_COUNT = "l_tcnt";
+static const char *KEY_LOTTERY_PARTICIPANTS = "l_part";
+static const char *KEY_LOTTERY_TEAM_SRC[ORB_LOTTERY_MAX_TEAMS] = { "l1_src", "l2_src", "l3_src", "l4_src" };
+static const char *KEY_LOTTERY_TEAM_R[ORB_LOTTERY_MAX_TEAMS] = { "l1_r", "l2_r", "l3_r", "l4_r" };
+static const char *KEY_LOTTERY_TEAM_G[ORB_LOTTERY_MAX_TEAMS] = { "l1_g", "l2_g", "l3_g", "l4_g" };
+static const char *KEY_LOTTERY_TEAM_B[ORB_LOTTERY_MAX_TEAMS] = { "l1_b", "l2_b", "l3_b", "l4_b" };
+static const char *KEY_LOTTERY_TEAM_TRACK[ORB_LOTTERY_MAX_TEAMS] = { "l1_trk", "l2_trk", "l3_trk", "l4_trk" };
+static const char *KEY_LOTTERY_TEAM_TTS[ORB_LOTTERY_MAX_TEAMS] = { "l1_tts", "l2_tts", "l3_tts", "l4_tts" };
+static const char *KEY_LOTTERY_FINISH_SRC = "l_fsrc";
+static const char *KEY_LOTTERY_FINISH_VAL = "l_fval";
 
 enum {
     FEATURE_FLAG_NETWORK = (1U << 0),
@@ -87,6 +98,11 @@ static void unpack_feature_flags(uint8_t flags, orb_runtime_config_t *cfg)
 static bool offline_submode_valid(uint8_t v)
 {
     return (v <= (uint8_t)ORB_OFFLINE_SUBMODE_PROPHECY);
+}
+
+static bool lottery_team_source_valid(uint8_t v)
+{
+    return v <= (uint8_t)ORB_LOTTERY_TEAM_SOURCE_TTS;
 }
 
 esp_err_t config_store_nvs_load(orb_runtime_config_t *cfg, bool *loaded)
@@ -132,6 +148,40 @@ esp_err_t config_store_nvs_load(orb_runtime_config_t *cfg, bool *loaded)
     if (nvs_get_u8(handle, KEY_OFFLINE_SUBMODE, &value_u8) == ESP_OK && offline_submode_valid(value_u8)) {
         cfg->offline_submode = (orb_offline_submode_t)value_u8;
     }
+    if (nvs_get_u8(handle, KEY_LOTTERY_TEAM_COUNT, &value_u8) == ESP_OK) {
+        if (value_u8 >= 2U && value_u8 <= ORB_LOTTERY_MAX_TEAMS) {
+            cfg->offline_lottery_team_count = value_u8;
+        }
+    }
+    uint16_t value_u16 = 0U;
+    if (nvs_get_u16(handle, KEY_LOTTERY_PARTICIPANTS, &value_u16) == ESP_OK) {
+        if (value_u16 >= 1U && value_u16 <= ORB_LOTTERY_PARTICIPANTS_MAX) {
+            cfg->offline_lottery_participants_total = value_u16;
+        }
+    }
+    for (size_t i = 0U; i < ORB_LOTTERY_MAX_TEAMS; ++i) {
+        if (nvs_get_u8(handle, KEY_LOTTERY_TEAM_SRC[i], &value_u8) == ESP_OK && lottery_team_source_valid(value_u8)) {
+            cfg->offline_lottery_teams[i].source = value_u8;
+        }
+        if (nvs_get_u8(handle, KEY_LOTTERY_TEAM_R[i], &value_u8) == ESP_OK) {
+            cfg->offline_lottery_teams[i].color_r = value_u8;
+        }
+        if (nvs_get_u8(handle, KEY_LOTTERY_TEAM_G[i], &value_u8) == ESP_OK) {
+            cfg->offline_lottery_teams[i].color_g = value_u8;
+        }
+        if (nvs_get_u8(handle, KEY_LOTTERY_TEAM_B[i], &value_u8) == ESP_OK) {
+            cfg->offline_lottery_teams[i].color_b = value_u8;
+        }
+        size_t str_len = sizeof(cfg->offline_lottery_teams[i].track_path);
+        (void)nvs_get_str(handle, KEY_LOTTERY_TEAM_TRACK[i], cfg->offline_lottery_teams[i].track_path, &str_len);
+        str_len = sizeof(cfg->offline_lottery_teams[i].tts_text);
+        (void)nvs_get_str(handle, KEY_LOTTERY_TEAM_TTS[i], cfg->offline_lottery_teams[i].tts_text, &str_len);
+    }
+    if (nvs_get_u8(handle, KEY_LOTTERY_FINISH_SRC, &value_u8) == ESP_OK && lottery_team_source_valid(value_u8)) {
+        cfg->offline_lottery_finish_source = value_u8;
+    }
+    size_t finish_len = sizeof(cfg->offline_lottery_finish_value);
+    (void)nvs_get_str(handle, KEY_LOTTERY_FINISH_VAL, cfg->offline_lottery_finish_value, &finish_len);
 
     uint32_t gap_ms = 0;
     if (nvs_get_u32(handle, KEY_AURA_GAP_MS, &gap_ms) == ESP_OK) {
@@ -262,6 +312,36 @@ esp_err_t config_store_nvs_save(const orb_runtime_config_t *cfg)
     }
     if (err == ESP_OK) {
         err = nvs_set_u8(handle, KEY_OFFLINE_SUBMODE, (uint8_t)cfg->offline_submode);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, KEY_LOTTERY_TEAM_COUNT, cfg->offline_lottery_team_count);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u16(handle, KEY_LOTTERY_PARTICIPANTS, cfg->offline_lottery_participants_total);
+    }
+    for (size_t i = 0U; err == ESP_OK && i < ORB_LOTTERY_MAX_TEAMS; ++i) {
+        err = nvs_set_u8(handle, KEY_LOTTERY_TEAM_SRC[i], cfg->offline_lottery_teams[i].source);
+        if (err == ESP_OK) {
+            err = nvs_set_u8(handle, KEY_LOTTERY_TEAM_R[i], cfg->offline_lottery_teams[i].color_r);
+        }
+        if (err == ESP_OK) {
+            err = nvs_set_u8(handle, KEY_LOTTERY_TEAM_G[i], cfg->offline_lottery_teams[i].color_g);
+        }
+        if (err == ESP_OK) {
+            err = nvs_set_u8(handle, KEY_LOTTERY_TEAM_B[i], cfg->offline_lottery_teams[i].color_b);
+        }
+        if (err == ESP_OK) {
+            err = nvs_set_str(handle, KEY_LOTTERY_TEAM_TRACK[i], cfg->offline_lottery_teams[i].track_path);
+        }
+        if (err == ESP_OK) {
+            err = nvs_set_str(handle, KEY_LOTTERY_TEAM_TTS[i], cfg->offline_lottery_teams[i].tts_text);
+        }
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, KEY_LOTTERY_FINISH_SRC, cfg->offline_lottery_finish_source);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_str(handle, KEY_LOTTERY_FINISH_VAL, cfg->offline_lottery_finish_value);
     }
     if (err == ESP_OK) {
         err = nvs_set_u32(handle, KEY_AURA_GAP_MS, cfg->aura_gap_ms);

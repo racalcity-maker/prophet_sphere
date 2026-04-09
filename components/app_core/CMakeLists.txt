@@ -6,6 +6,10 @@ idf_component_register(
         "runtime/app_tasking.c"
         "mode/app_fsm.c"
         "mode/mode_manager.c"
+        "mode/mode_dispatch_pipeline.c"
+        "mode/mode_event_adapter.c"
+        "mode/mode_switch_cleanup.c"
+        "mode/mode_switch_orchestrator.c"
         "mode/mode_action_executor.c"
         "mode/mode_action_executor_audio.c"
         "mode/mode_action_executor_mic.c"
@@ -27,4 +31,6 @@ idf_component_register(
         common
         modes
         services_config
+    PRIV_REQUIRES
+        services_audio
 )

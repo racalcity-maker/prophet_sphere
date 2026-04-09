@@ -163,11 +163,12 @@ esp_err_t mode_action_executor_handle_action_start_audio_sequence(mode_action_ex
         (void)control_dispatch_queue_led_touch_overlay_clear();
 
         if (gap_ms == 0U) {
-            orb_runtime_config_t cfg = { 0 };
-            if (config_manager_get_snapshot(&cfg) == ESP_OK) {
-                gap_ms = cfg.aura_gap_ms;
-            } else {
+            if (config_manager_get_aura_gap_ms(&gap_ms) != ESP_OK) {
                 gap_ms = (uint32_t)CONFIG_ORB_AURA_TRACK_GAP_MS;
+            } else {
+                if (gap_ms == 0U) {
+                    gap_ms = (uint32_t)CONFIG_ORB_AURA_TRACK_GAP_MS;
+                }
             }
         }
     } else if (first_asset_id == 0U || second_asset_id == 0U) {

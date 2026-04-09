@@ -14,6 +14,10 @@ typedef struct {
     uint8_t aura_g;
     uint8_t aura_b;
     uint8_t aura_level;
+    uint8_t lottery_team_count;
+    uint8_t lottery_color_r[4];
+    uint8_t lottery_color_g[4];
+    uint8_t lottery_color_b[4];
     uint16_t idle_v_q8;
     uint16_t hybrid_idle_v_q8;
     uint16_t hybrid_touch_v_q8;

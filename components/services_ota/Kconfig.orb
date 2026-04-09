@@ -2,7 +2,7 @@ menu "OTA Configuration"
 
 config ORB_ENABLE_OTA
     bool "Enable OTA service"
-    default y
+    default n
     depends on ORB_ENABLE_NETWORK
 
 config ORB_OTA_ALLOW_HTTP

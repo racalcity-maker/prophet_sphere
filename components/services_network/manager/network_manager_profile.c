@@ -15,15 +15,7 @@ void network_manager_load_sta_credentials(char *out_ssid,
         out_password[0] = '\0';
     }
 
-    orb_runtime_config_t cfg = { 0 };
-    if (config_manager_get_snapshot(&cfg) == ESP_OK) {
-        if (out_ssid != NULL && ssid_len > 0U) {
-            strlcpy(out_ssid, cfg.wifi_sta_ssid, ssid_len);
-        }
-        if (out_password != NULL && pass_len > 0U) {
-            strlcpy(out_password, cfg.wifi_sta_password, pass_len);
-        }
-    }
+    (void)config_manager_get_wifi_sta_credentials(out_ssid, ssid_len, out_password, pass_len);
 
     if (out_ssid != NULL && out_ssid[0] == '\0') {
         strlcpy(out_ssid, CONFIG_ORB_NETWORK_STA_SSID, ssid_len);

@@ -236,6 +236,66 @@ button.bad {
     font-weight: 600;
 }
 
+.lottery-toolbar {
+    justify-content: space-between;
+}
+
+.lottery-count-pills {
+    display: inline-flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.lottery-count-btn {
+    min-width: 88px;
+    background: #1f2937;
+}
+
+.lottery-count-btn.active {
+    border-color: var(--accent);
+    background: #7c2d12;
+}
+
+.lottery-preview {
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+.lottery-team-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 10px;
+}
+
+.lottery-team-card {
+    border-width: 2px;
+    transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.lottery-team-card:hover {
+    transform: translateY(-1px);
+}
+
+.lottery-team-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.lottery-team-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 1px solid #94a3b8;
+    background: #ffffff;
+    flex: 0 0 14px;
+}
+
+.lottery-team-grid .row {
+    grid-column: 1 / -1;
+}
+
 .inline-check {
     display: flex;
     align-items: center;
@@ -266,6 +326,65 @@ pre.log {
     display: inline-block;
     margin-right: 10px;
     font-size: 13px;
+}
+
+.color-control {
+    display: grid;
+    grid-template-columns: 58px 1fr;
+    gap: 8px;
+    align-items: center;
+}
+
+.color-control input[type="color"] {
+    width: 58px;
+    min-width: 58px;
+    height: 38px;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+.color-control input[type="text"] {
+    font-family: "Consolas", "Courier New", monospace;
+    text-transform: uppercase;
+}
+
+.palette-preview {
+    margin-top: 8px;
+    width: 100%;
+    height: 22px;
+    border-radius: 10px;
+    border: 1px solid #475569;
+    background: linear-gradient(90deg, #ff00b4 0%, #00e6ff 100%);
+}
+
+.palette-legend {
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 8px;
+}
+
+.palette-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.palette-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 1px solid #94a3b8;
+    background: #000000;
+    flex: 0 0 14px;
+}
+
+.palette-legend-item code {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text);
 }
 
 @media (max-width: 640px) {

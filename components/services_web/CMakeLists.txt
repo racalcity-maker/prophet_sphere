@@ -11,11 +11,13 @@ idf_component_register(
         "api/endpoints/rest_api_config.c"
         "api/endpoints/rest_api_network.c"
         "api/endpoints/rest_api_offline.c"
-        "api/endpoints/rest_api_diag.c"
         "api/endpoints/rest_api_server_tts.c"
         "api/talk/rest_api_talk.c"
         "api/talk/rest_api_talk_common.c"
         "api/talk/rest_api_talk_say.c"
+        "api/talk/rest_api_talk_live_buffer.c"
+        "api/talk/rest_api_talk_live_postfx.c"
+        "api/talk/rest_api_talk_live_runtime.c"
         "api/talk/rest_api_talk_live_ring.c"
         "api/talk/rest_api_talk_ws.c"
     INCLUDE_DIRS
@@ -50,5 +52,8 @@ idf_component_register(
         "portal/assets/js/features/hybrid_effects.js"
         "portal/assets/js/features/talk.js"
         "portal/assets/js/features/server_tts.js"
+        "portal/assets/js/pages/page_offline.js"
+        "portal/assets/js/pages/network_setup_page.js"
+        "portal/assets/js/pages/page_mode_generic.js"
         "portal/assets/js/app.js"
 )

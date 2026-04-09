@@ -46,6 +46,7 @@ extern "C" {
 #define LED_SCENE_HYBRID_WLED_HEARTBEAT ((led_scene_id_t)ORB_LED_SCENE_ID_HYBRID_WLED_HEARTBEAT)
 #define LED_SCENE_HYBRID_WLED_PINWHEEL ((led_scene_id_t)ORB_LED_SCENE_ID_HYBRID_WLED_PINWHEEL)
 #define LED_SCENE_HYBRID_WLED_COMET ((led_scene_id_t)ORB_LED_SCENE_ID_HYBRID_WLED_COMET)
+#define LED_SCENE_LOTTERY_TEAM_COLOR ((led_scene_id_t)ORB_LED_SCENE_ID_LOTTERY_TEAM_COLOR)
 
 const char *led_scene_name(led_scene_id_t scene_id);
 bool led_scene_is_known(led_scene_id_t scene_id);

@@ -34,6 +34,11 @@ config ORB_TOUCH_POLL_PERIOD_MS
     default 8
     depends on ORB_TOUCH_ENABLE_REAL
 
+config ORB_TOUCH_STOP_TIMEOUT_MS
+    int "Touch task stop timeout (ms)"
+    range 100 10000
+    default 1200
+
 config ORB_TOUCH_CALIBRATION_SAMPLES
     int "Touch startup calibration samples"
     range 8 200

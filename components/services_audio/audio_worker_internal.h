@@ -43,30 +43,34 @@ typedef struct {
     bool fade_post_done_event;
 } audio_bg_state_t;
 
+typedef struct audio_worker_shared_state {
+    bool output_started;
+    bool output_paused;
+    bool pcm_stream_active;
+    uint8_t volume;
+    TickType_t last_pcm_stream_timeout_log_tick;
+
+    TickType_t audio_level_last_post_tick;
+    uint8_t audio_level_filtered;
+    uint8_t audio_level_last_sent;
+    TickType_t audio_level_last_sent_tick;
+    audio_reactive_analyzer_t reactive_analyzer;
+
+    audio_bg_state_t bg;
+    bool mp3_drop_first_frame;
+    bool fg_content_started;
+    bool fg_attack_active;
+    uint32_t fg_attack_total_samples;
+    uint32_t fg_attack_done_samples;
+    int16_t mix_buffer[AUDIO_MIX_BUFFER_SAMPLES];
+    int16_t bg_buffer[AUDIO_MIX_BUFFER_SAMPLES];
+} audio_worker_shared_state_t;
+
 /*
- * Internal audio_worker shared state.
- * Owned by audio_task/audio_worker thread; helper modules only access it from that context.
+ * Internal audio_worker shared state type.
+ * Instance ownership stays inside audio_worker.c; helper modules receive pointers
+ * through explicit init/ctx APIs.
  */
-extern bool s_output_started;
-extern bool s_output_paused;
-extern bool s_pcm_stream_active;
-extern uint8_t s_volume;
-extern TickType_t s_last_pcm_stream_timeout_log_tick;
-
-extern TickType_t s_audio_level_last_post_tick;
-extern uint8_t s_audio_level_filtered;
-extern uint8_t s_audio_level_last_sent;
-extern TickType_t s_audio_level_last_sent_tick;
-extern audio_reactive_analyzer_t s_reactive_analyzer;
-
-extern audio_bg_state_t s_bg;
-extern bool s_mp3_drop_first_frame;
-extern bool s_fg_content_started;
-extern bool s_fg_attack_active;
-extern uint32_t s_fg_attack_total_samples;
-extern uint32_t s_fg_attack_done_samples;
-extern int16_t s_mix_buffer[AUDIO_MIX_BUFFER_SAMPLES];
-extern int16_t s_bg_buffer[AUDIO_MIX_BUFFER_SAMPLES];
 
 TickType_t audio_worker_ms_to_ticks_min1(uint32_t ms);
 uint32_t audio_worker_ms_to_samples(uint32_t ms);

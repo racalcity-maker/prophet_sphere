@@ -26,7 +26,7 @@ esp_err_t control_dispatch_queue_led_scene(uint32_t scene_id, uint32_t duration_
 esp_err_t control_dispatch_queue_led_stop(void)
 {
     led_command_t cmd = { 0 };
-    cmd.id = LED_CMD_STOP;
+    cmd.id = LED_CMD_CLEAR;
     return app_tasking_send_led_command(&cmd, CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS);
 }
 

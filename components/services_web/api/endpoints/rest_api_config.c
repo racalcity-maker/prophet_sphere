@@ -21,13 +21,14 @@ static uint32_t request_timeout_ms(void)
 
 static esp_err_t send_config_snapshot(httpd_req_t *req)
 {
-    orb_runtime_config_t cfg = { 0 };
+    static orb_runtime_config_t cfg;
+    static char json[2048];
+
     esp_err_t err = config_manager_get_snapshot(&cfg);
     if (err != ESP_OK) {
         return rest_api_send_error_json(req, "500 Internal Server Error", "config_read_failed");
     }
 
-    char json[1792];
     (void)snprintf(json,
                    sizeof(json),
                    "{\"ok\":true,\"brightness\":%u,\"volume\":%u,\"network\":%s,\"mqtt\":%s,\"ai\":%s,\"web\":%s,"
@@ -82,7 +83,10 @@ static esp_err_t config_get_handler(httpd_req_t *req)
 
 static esp_err_t config_post_handler(httpd_req_t *req)
 {
-    orb_runtime_config_t cfg = { 0 };
+    static orb_runtime_config_t cfg;
+    static char intro_dir[ORB_CONFIG_PATH_MAX];
+    static char response_dir[ORB_CONFIG_PATH_MAX];
+
     esp_err_t err = config_manager_get_snapshot(&cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "config snapshot failed: %s", esp_err_to_name(err));
@@ -148,8 +152,8 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         aura_changed = true;
     }
 
-    char intro_dir[ORB_CONFIG_PATH_MAX] = { 0 };
-    char response_dir[ORB_CONFIG_PATH_MAX] = { 0 };
+    intro_dir[0] = '\0';
+    response_dir[0] = '\0';
     bool intro_changed = false;
     bool response_changed = false;
     if (rest_api_query_value(req, "aura_intro_dir", intro_dir, sizeof(intro_dir)) == ESP_OK) {
@@ -449,47 +453,27 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         return rest_api_send_error_json(req, "400 Bad Request", "no_valid_params");
     }
 
-    ESP_LOGI(
-        TAG,
-        "config apply uri=%s changed=[brightness:%d volume:%d submode:%d aura:%d hybrid:%d hybrid_retry:%d hybrid_effect:%d hybrid_palette:%d bg_fade_out:%d flags:%d] "
-        "now[brightness=%u volume=%u submode=%s reject=%u mic_ms=%" PRIu32
-        " retries=%u bg_fade_out=%" PRIu32 " fx(idle=%" PRIu32 " talk=%" PRIu32 " speed=%u intensity=%u scale=%u palette=%u "
-        "c1=(%u,%u,%u) c2=(%u,%u,%u) c3=(%u,%u,%u))] save=%d",
-        req ? req->uri : "-",
-        (int)brightness_changed,
-        (int)volume_changed,
-        (int)submode_changed,
-        (int)aura_changed,
-        (int)hybrid_changed,
-        (int)hybrid_retry_changed,
-        (int)hybrid_effect_changed,
-        (int)hybrid_effect_palette_changed,
-        (int)bg_fade_out_changed,
-        (int)flags_changed,
-        cfg.led_brightness,
-        cfg.audio_volume,
-        config_manager_offline_submode_to_str(cfg.offline_submode),
-        (unsigned)cfg.hybrid_reject_threshold_permille,
-        cfg.hybrid_mic_capture_ms,
-        (unsigned)cfg.hybrid_unknown_retry_max,
-        cfg.prophecy_bg_fade_out_ms,
-        cfg.hybrid_effect_idle_scene_id,
-        cfg.hybrid_effect_talk_scene_id,
-        (unsigned)cfg.hybrid_effect_speed,
-        (unsigned)cfg.hybrid_effect_intensity,
-        (unsigned)cfg.hybrid_effect_scale,
-        (unsigned)cfg.hybrid_effect_palette_mode,
-        (unsigned)cfg.hybrid_effect_color1_r,
-        (unsigned)cfg.hybrid_effect_color1_g,
-        (unsigned)cfg.hybrid_effect_color1_b,
-        (unsigned)cfg.hybrid_effect_color2_r,
-        (unsigned)cfg.hybrid_effect_color2_g,
-        (unsigned)cfg.hybrid_effect_color2_b,
-        (unsigned)cfg.hybrid_effect_color3_r,
-        (unsigned)cfg.hybrid_effect_color3_g,
-        (unsigned)cfg.hybrid_effect_color3_b,
-        (int)persist
-    );
+    ESP_LOGI(TAG,
+             "config apply uri=%s changed=[b:%d v:%d s:%d a:%d h:%d hr:%d he:%d hp:%d bg:%d f:%d] now[b=%u v=%u sub=%s "
+             "rej=%u mic=%" PRIu32 " retry=%u save=%d]",
+             req ? req->uri : "-",
+             (int)brightness_changed,
+             (int)volume_changed,
+             (int)submode_changed,
+             (int)aura_changed,
+             (int)hybrid_changed,
+             (int)hybrid_retry_changed,
+             (int)hybrid_effect_changed,
+             (int)hybrid_effect_palette_changed,
+             (int)bg_fade_out_changed,
+             (int)flags_changed,
+             cfg.led_brightness,
+             cfg.audio_volume,
+             config_manager_offline_submode_to_str(cfg.offline_submode),
+             (unsigned)cfg.hybrid_reject_threshold_permille,
+             cfg.hybrid_mic_capture_ms,
+             (unsigned)cfg.hybrid_unknown_retry_max,
+             (int)persist);
 
     return send_config_snapshot(req);
 }

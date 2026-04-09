@@ -11,6 +11,22 @@ extern "C" {
 #define ORB_CONFIG_PATH_MAX 128U
 #define ORB_WIFI_SSID_MAX 33U
 #define ORB_WIFI_PASSWORD_MAX 65U
+#define ORB_LOTTERY_MAX_TEAMS 4U
+#define ORB_LOTTERY_PARTICIPANTS_MAX 128U
+
+typedef enum {
+    ORB_LOTTERY_TEAM_SOURCE_TRACK = 0,
+    ORB_LOTTERY_TEAM_SOURCE_TTS = 1,
+} orb_lottery_team_source_t;
+
+typedef struct {
+    uint8_t color_r;
+    uint8_t color_g;
+    uint8_t color_b;
+    uint8_t source;
+    char track_path[ORB_CONFIG_PATH_MAX];
+    char tts_text[ORB_CONFIG_PATH_MAX];
+} orb_lottery_team_config_t;
 
 typedef enum {
     ORB_OFFLINE_SUBMODE_AURA = 0,
@@ -33,6 +49,11 @@ typedef struct {
     bool web_enabled;
     orb_offline_submode_t offline_submode;
     uint32_t offline_lottery_start_seq;
+    uint8_t offline_lottery_team_count;
+    uint16_t offline_lottery_participants_total;
+    orb_lottery_team_config_t offline_lottery_teams[ORB_LOTTERY_MAX_TEAMS];
+    uint8_t offline_lottery_finish_source;
+    char offline_lottery_finish_value[ORB_CONFIG_PATH_MAX];
     uint32_t aura_gap_ms;
     uint32_t hybrid_mic_capture_ms;
     uint32_t hybrid_effect_idle_scene_id;

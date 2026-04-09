@@ -2,7 +2,7 @@ menu "MQTT Configuration"
 
 config ORB_ENABLE_MQTT
     bool "Enable MQTT service"
-    default y
+    default n
     depends on ORB_ENABLE_NETWORK
 
 config ORB_MQTT_BASE_TOPIC

@@ -136,9 +136,150 @@
         </div>
 
         <div class="settings-panel" data-settings-panel="lottery">
-            <p class="muted">Lottery round starts only by manual command.</p>
+            <p class="muted">Set team count, colors, and voice/track source for each team.</p>
+            <div class="row lottery-toolbar">
+                <div class="lottery-count-pills" role="group" aria-label="Quick team count">
+                    <button type="button" class="lottery-count-btn" data-lottery-team-count="2">2 Teams</button>
+                    <button type="button" class="lottery-count-btn" data-lottery-team-count="3">3 Teams</button>
+                    <button type="button" class="lottery-count-btn" data-lottery-team-count="4">4 Teams</button>
+                </div>
+                <button id="offline-lottery-fill-defaults-btn" type="button">Auto Team Names</button>
+            </div>
+            <div class="grid-two">
+                <label>Teams (2..4)
+                    <input id="offline-lottery-team-count" type="number" min="2" max="4" value="2">
+                </label>
+                <label>Participants Total
+                    <input id="offline-lottery-participants-total" type="number" min="1" max="128" value="17">
+                </label>
+                <label>Audio Mode
+                    <select id="offline-lottery-audio-mode">
+                        <option value="track">MP3 / WAV (SD card)</option>
+                        <option value="tts">Server TTS</option>
+                    </select>
+                </label>
+            </div>
+            <div class="field-box lottery-preview">
+                <div class="field-title">Distribution Preview</div>
+                <div id="offline-lottery-preview" class="muted">-</div>
+            </div>
+            <div class="field-box">
+                <div class="field-title">Finish Prompt</div>
+                <div class="grid-two">
+                    <label>Finish Source
+                        <select id="offline-lottery-finish-source">
+                            <option value="track">SD Track (mp3/wav)</option>
+                            <option value="tts">Server TTS</option>
+                        </select>
+                    </label>
+                    <label id="offline-lottery-finish-value-label">Finish Track Path
+                        <input id="offline-lottery-finish-value" type="text" placeholder="/sdcard/audio/lottery/finished/custom.mp3">
+                    </label>
+                </div>
+            </div>
+
+            <div class="lottery-team-grid">
+            <div id="offline-lottery-team-1" class="field-box lottery-team-card">
+                <div class="lottery-team-head">
+                    <span id="offline-lottery-t1-swatch" class="lottery-team-swatch"></span>
+                    <div id="offline-lottery-team-1-title" class="field-title">Team 1</div>
+                </div>
+                <div class="grid-two">
+                    <label>Color
+                        <input id="offline-lottery-t1-color" type="color" value="#ff3c28">
+                    </label>
+                    <label>Audio Source
+                        <select id="offline-lottery-t1-source">
+                            <option value="track">SD Track (mp3/wav)</option>
+                            <option value="tts">Server TTS</option>
+                        </select>
+                    </label>
+                </div>
+                <label>Track Path
+                    <input id="offline-lottery-t1-track" type="text" placeholder="/sdcard/audio/lottery/team1/custom.mp3">
+                </label>
+                <label>TTS Text / Team Name
+                    <input id="offline-lottery-t1-tts" type="text" placeholder="Команда один">
+                </label>
+            </div>
+
+            <div id="offline-lottery-team-2" class="field-box lottery-team-card">
+                <div class="lottery-team-head">
+                    <span id="offline-lottery-t2-swatch" class="lottery-team-swatch"></span>
+                    <div id="offline-lottery-team-2-title" class="field-title">Team 2</div>
+                </div>
+                <div class="grid-two">
+                    <label>Color
+                        <input id="offline-lottery-t2-color" type="color" value="#28ff78">
+                    </label>
+                    <label>Audio Source
+                        <select id="offline-lottery-t2-source">
+                            <option value="track">SD Track (mp3/wav)</option>
+                            <option value="tts">Server TTS</option>
+                        </select>
+                    </label>
+                </div>
+                <label>Track Path
+                    <input id="offline-lottery-t2-track" type="text" placeholder="/sdcard/audio/lottery/team2/custom.mp3">
+                </label>
+                <label>TTS Text / Team Name
+                    <input id="offline-lottery-t2-tts" type="text" placeholder="Команда два">
+                </label>
+            </div>
+
+            <div id="offline-lottery-team-3" class="field-box lottery-team-card">
+                <div class="lottery-team-head">
+                    <span id="offline-lottery-t3-swatch" class="lottery-team-swatch"></span>
+                    <div id="offline-lottery-team-3-title" class="field-title">Team 3</div>
+                </div>
+                <div class="grid-two">
+                    <label>Color
+                        <input id="offline-lottery-t3-color" type="color" value="#46a0ff">
+                    </label>
+                    <label>Audio Source
+                        <select id="offline-lottery-t3-source">
+                            <option value="track">SD Track (mp3/wav)</option>
+                            <option value="tts">Server TTS</option>
+                        </select>
+                    </label>
+                </div>
+                <label>Track Path
+                    <input id="offline-lottery-t3-track" type="text" placeholder="/sdcard/audio/lottery/team3/custom.mp3">
+                </label>
+                <label>TTS Text / Team Name
+                    <input id="offline-lottery-t3-tts" type="text" placeholder="Команда три">
+                </label>
+            </div>
+
+            <div id="offline-lottery-team-4" class="field-box lottery-team-card">
+                <div class="lottery-team-head">
+                    <span id="offline-lottery-t4-swatch" class="lottery-team-swatch"></span>
+                    <div id="offline-lottery-team-4-title" class="field-title">Team 4</div>
+                </div>
+                <div class="grid-two">
+                    <label>Color
+                        <input id="offline-lottery-t4-color" type="color" value="#ffd228">
+                    </label>
+                    <label>Audio Source
+                        <select id="offline-lottery-t4-source">
+                            <option value="track">SD Track (mp3/wav)</option>
+                            <option value="tts">Server TTS</option>
+                        </select>
+                    </label>
+                </div>
+                <label>Track Path
+                    <input id="offline-lottery-t4-track" type="text" placeholder="/sdcard/audio/lottery/team4/custom.mp3">
+                </label>
+                <label>TTS Text / Team Name
+                    <input id="offline-lottery-t4-tts" type="text" placeholder="Команда четыре">
+                </label>
+            </div>
+
             <div class="row">
+                <button id="offline-save-lottery-btn" class="primary">Save Lottery Settings</button>
+                <button id="offline-save-start-lottery-btn" class="good">Save + Start Round</button>
                 <button id="offline-lottery-start-btn" class="good">Start Lottery Round</button>
+            </div>
             </div>
         </div>
 
@@ -177,9 +318,12 @@
 
 </div>
 <script src="/assets/js/core/dom_http.js?v=20260406-core-1"></script>
-<script src="/assets/js/features/hybrid_effects.js?v=20260406-fx-2"></script>
+<script src="/assets/js/features/hybrid_effects.js?v=20260406-fx-3"></script>
 <script src="/assets/js/features/talk.js?v=20260406-talk-1"></script>
-<script src="/assets/js/features/server_tts.js?v=20260406-tts-1"></script>
-<script src="/assets/js/app.js?v=20260406-split-1"></script>
+<script src="/assets/js/features/server_tts.js?v=20260406-tts-2"></script>
+<script src="/assets/js/pages/page_offline.js?v=20260406-pages-7"></script>
+<script src="/assets/js/pages/network_setup_page.js?v=20260406-pages-3"></script>
+<script src="/assets/js/pages/page_mode_generic.js?v=20260406-pages-1"></script>
+<script src="/assets/js/app.js?v=20260406-split-2"></script>
 </body>
 </html>

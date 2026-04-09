@@ -47,61 +47,74 @@ esp_err_t audio_worker_post_audio_error(uint32_t asset_id, int32_t code)
     return app_tasking_post_event(&err_evt, CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS);
 }
 
-void audio_worker_audio_level_reset(bool post_zero)
+void audio_worker_audio_level_reset(audio_worker_shared_state_t *state, bool post_zero)
 {
 #if CONFIG_ORB_AUDIO_REACTIVE_EVENT_ENABLE
-    s_audio_level_filtered = 0U;
-    s_audio_level_last_sent = 0U;
-    s_audio_level_last_sent_tick = xTaskGetTickCount();
-    s_audio_level_last_post_tick = xTaskGetTickCount();
-    audio_reactive_analyzer_reset(&s_reactive_analyzer);
+    if (state == NULL) {
+        return;
+    }
+
+    state->audio_level_filtered = 0U;
+    state->audio_level_last_sent = 0U;
+    state->audio_level_last_sent_tick = xTaskGetTickCount();
+    state->audio_level_last_post_tick = xTaskGetTickCount();
+    audio_reactive_analyzer_reset(&state->reactive_analyzer);
     if (post_zero) {
         (void)post_audio_level(0U);
     }
 #else
+    (void)state;
     (void)post_zero;
 #endif
 }
 
-void audio_worker_audio_level_process_samples(const int16_t *samples, size_t sample_count)
+void audio_worker_audio_level_process_samples(audio_worker_shared_state_t *state, const int16_t *samples, size_t sample_count)
 {
 #if !CONFIG_ORB_AUDIO_REACTIVE_EVENT_ENABLE
+    (void)state;
     (void)samples;
     (void)sample_count;
     return;
 #else
-    audio_reactive_analyzer_process_pcm16_mono(&s_reactive_analyzer, samples, sample_count);
-    s_audio_level_filtered = audio_reactive_analyzer_get_level(&s_reactive_analyzer);
+    if (state == NULL) {
+        return;
+    }
+    audio_reactive_analyzer_process_pcm16_mono(&state->reactive_analyzer, samples, sample_count);
+    state->audio_level_filtered = audio_reactive_analyzer_get_level(&state->reactive_analyzer);
 #endif
 }
 
-void audio_worker_audio_level_maybe_publish(void)
+void audio_worker_audio_level_maybe_publish(audio_worker_shared_state_t *state)
 {
 #if !CONFIG_ORB_AUDIO_REACTIVE_EVENT_ENABLE
+    (void)state;
     return;
 #else
+    if (state == NULL) {
+        return;
+    }
     TickType_t now = xTaskGetTickCount();
     TickType_t publish_ticks = audio_worker_ms_to_ticks_min1((uint32_t)CONFIG_ORB_AUDIO_REACTIVE_UPDATE_MS);
-    if ((now - s_audio_level_last_post_tick) < publish_ticks) {
+    if ((now - state->audio_level_last_post_tick) < publish_ticks) {
         return;
     }
-    s_audio_level_last_post_tick = now;
+    state->audio_level_last_post_tick = now;
 
-    if (s_audio_level_filtered == s_audio_level_last_sent && s_audio_level_filtered == 0U) {
+    if (state->audio_level_filtered == state->audio_level_last_sent && state->audio_level_filtered == 0U) {
         return;
     }
 
-    uint8_t delta = (s_audio_level_filtered >= s_audio_level_last_sent)
-                        ? (uint8_t)(s_audio_level_filtered - s_audio_level_last_sent)
-                        : (uint8_t)(s_audio_level_last_sent - s_audio_level_filtered);
+    uint8_t delta = (state->audio_level_filtered >= state->audio_level_last_sent)
+                        ? (uint8_t)(state->audio_level_filtered - state->audio_level_last_sent)
+                        : (uint8_t)(state->audio_level_last_sent - state->audio_level_filtered);
     TickType_t keepalive_ticks = audio_worker_ms_to_ticks_min1(120U);
-    if (delta < 3U && (now - s_audio_level_last_sent_tick) < keepalive_ticks) {
+    if (delta < 3U && (now - state->audio_level_last_sent_tick) < keepalive_ticks) {
         return;
     }
 
-    if (post_audio_level(s_audio_level_filtered) == ESP_OK) {
-        s_audio_level_last_sent = s_audio_level_filtered;
-        s_audio_level_last_sent_tick = now;
+    if (post_audio_level(state->audio_level_filtered) == ESP_OK) {
+        state->audio_level_last_sent = state->audio_level_filtered;
+        state->audio_level_last_sent_tick = now;
     }
 #endif
 }

@@ -372,21 +372,50 @@ static void render_grumble_red(const led_effects_state_t *state,
     fill_color(r, 0U, 0U, brightness, ctx);
 }
 
-static void render_lottery_idle(uint32_t now_ms, uint8_t brightness, led_effects_fill_fn fill_color, void *ctx)
+static void render_lottery_idle(led_effects_state_t *state,
+                                uint32_t now_ms,
+                                uint8_t brightness,
+                                led_effects_fill_fn fill_color,
+                                void *ctx)
 {
-    const uint32_t cycle_ms = 3600U;
-    const uint8_t min_v = 40U;
-    const uint8_t max_v = 255U;
+    if (state == NULL) {
+        return;
+    }
 
-    uint8_t wave = triangle_wave_0_255(now_ms, cycle_ms);
-    uint8_t v = (uint8_t)(min_v + (((uint16_t)(max_v - min_v) * (uint16_t)wave) / 255U));
+    uint8_t teams = state->lottery_team_count;
+    if (teams < 2U) {
+        teams = 2U;
+    }
+    if (teams > 4U) {
+        teams = 4U;
+    }
 
-    uint32_t cycle_idx = now_ms / cycle_ms;
-    uint8_t hue = (uint8_t)(hash_u32(cycle_idx + 1U) & 0xFFU);
-    uint8_t r = 0U;
-    uint8_t g = 0U;
-    uint8_t b = 0U;
-    hsv_to_rgb_u8(hue, 220U, v, &r, &g, &b);
+    const uint32_t breathe_cycle_ms = 2400U;
+    uint32_t color_idx = (now_ms / breathe_cycle_ms) % teams;
+    uint8_t base_r = state->lottery_color_r[color_idx];
+    uint8_t base_g = state->lottery_color_g[color_idx];
+    uint8_t base_b = state->lottery_color_b[color_idx];
+
+    /* Reduce shared RGB floor to keep team colors vivid (less "white wash"). */
+    uint8_t min_c = base_r;
+    if (base_g < min_c) {
+        min_c = base_g;
+    }
+    if (base_b < min_c) {
+        min_c = base_b;
+    }
+    uint8_t cut = (uint8_t)(((uint16_t)min_c * 220U) / 255U);
+    base_r = (base_r > cut) ? (uint8_t)(base_r - cut) : 0U;
+    base_g = (base_g > cut) ? (uint8_t)(base_g - cut) : 0U;
+    base_b = (base_b > cut) ? (uint8_t)(base_b - cut) : 0U;
+
+    uint16_t wave_u16 = sine_wave_u16(now_ms, breathe_cycle_ms);
+    uint16_t v_target_q8 = (uint16_t)((48U << 8) + (((uint32_t)172U * (uint32_t)wave_u16) / 256U));
+    uint8_t v = smooth_q8_to_u8_dither(&state->idle_v_q8, v_target_q8, now_ms, (uint8_t)(0x30U + color_idx));
+
+    uint8_t r = (uint8_t)(((uint16_t)base_r * (uint16_t)v) / 255U);
+    uint8_t g = (uint8_t)(((uint16_t)base_g * (uint16_t)v) / 255U);
+    uint8_t b = (uint8_t)(((uint16_t)base_b * (uint16_t)v) / 255U);
     fill_color(r, g, b, brightness, ctx);
 }
 
@@ -402,6 +431,17 @@ static void render_lottery_hold_ramp(uint32_t scene_elapsed_ms, uint8_t brightne
     }
 
     fill_color(v, v, v, brightness, ctx);
+}
+
+static void render_lottery_team_color(const led_effects_state_t *state,
+                                      uint8_t brightness,
+                                      led_effects_fill_fn fill_color,
+                                      void *ctx)
+{
+    if (state == NULL) {
+        return;
+    }
+    fill_color(state->aura_r, state->aura_g, state->aura_b, brightness, ctx);
 }
 
 bool led_effects_render_classic_scene(led_scene_id_t scene_id,
@@ -447,10 +487,13 @@ bool led_effects_render_classic_scene(led_scene_id_t scene_id,
         render_grumble_red(state, brightness, fill_color, ctx);
         return true;
     case LED_SCENE_LOTTERY_IDLE:
-        render_lottery_idle(now_ms, brightness, fill_color, ctx);
+        render_lottery_idle(state, now_ms, brightness, fill_color, ctx);
         return true;
     case LED_SCENE_LOTTERY_HOLD_RAMP:
         render_lottery_hold_ramp(scene_elapsed_ms, brightness, fill_color, ctx);
+        return true;
+    case LED_SCENE_LOTTERY_TEAM_COLOR:
+        render_lottery_team_color(state, brightness, fill_color, ctx);
         return true;
     default:
         return false;

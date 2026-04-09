@@ -39,6 +39,7 @@ typedef struct {
 } service_ctx_t;
 
 static SemaphoreHandle_t s_runtime_mutex;
+static SemaphoreHandle_t s_transition_mutex;
 static service_ctx_t s_service_ctx[SERVICE_RUNTIME_COUNT];
 static service_runtime_requirements_t s_active_requirements;
 
@@ -212,6 +213,24 @@ static void unlock_runtime(void)
     }
 }
 
+static esp_err_t lock_transition(void)
+{
+    if (s_transition_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_transition_mutex, runtime_lock_timeout_ticks()) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
+static void unlock_transition(void)
+{
+    if (s_transition_mutex != NULL) {
+        xSemaphoreGive(s_transition_mutex);
+    }
+}
+
 static bool requirement_enabled(service_runtime_requirements_t requirements, service_runtime_id_t service)
 {
     return ((requirements & (1UL << service)) != 0U);
@@ -302,59 +321,86 @@ static service_runtime_requirements_t mode_requirements(orb_mode_t mode)
         return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS | SERVICE_RUNTIME_REQ_MIC | SERVICE_RUNTIME_REQ_STORAGE |
                net_group;
     case ORB_MODE_OFFLINE_SCRIPTED:
-        return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS | SERVICE_RUNTIME_REQ_STORAGE | net_group;
+        return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS | SERVICE_RUNTIME_REQ_MIC | SERVICE_RUNTIME_REQ_STORAGE | net_group;
     case ORB_MODE_NONE:
     default:
         return SERVICE_RUNTIME_ALWAYS_ON_REQUIREMENTS;
     }
 }
 
-static esp_err_t ensure_initialized_locked(service_runtime_id_t service)
+static esp_err_t ensure_initialized(service_runtime_id_t service)
 {
     service_ctx_t *ctx = &s_service_ctx[service];
     const service_desc_t *desc = &s_services[service];
 
+    esp_err_t lock_err = lock_runtime();
+    if (lock_err != ESP_OK) {
+        return lock_err;
+    }
     if (ctx->state != SERVICE_RUNTIME_STATE_UNINITIALIZED) {
+        unlock_runtime();
         return ESP_OK;
     }
     if (desc->init_fn == NULL) {
         ctx->state = SERVICE_RUNTIME_STATE_STOPPED;
+        unlock_runtime();
         return ESP_OK;
     }
+    unlock_runtime();
 
     esp_err_t err = call_lifecycle_fn(desc->init_fn, desc->name, "init");
+    lock_err = lock_runtime();
+    if (lock_err != ESP_OK) {
+        return (err == ESP_OK) ? lock_err : err;
+    }
+    ctx->state = (err == ESP_OK) ? SERVICE_RUNTIME_STATE_STOPPED : SERVICE_RUNTIME_STATE_ERROR;
+    unlock_runtime();
+
     if (err != ESP_OK) {
-        ctx->state = SERVICE_RUNTIME_STATE_ERROR;
         ESP_LOGW(TAG, "init failed for %s: %s", desc->name, esp_err_to_name(err));
         return err;
     }
-    ctx->state = SERVICE_RUNTIME_STATE_STOPPED;
     return ESP_OK;
 }
 
-static esp_err_t start_service_locked(service_runtime_id_t service)
+static esp_err_t start_service(service_runtime_id_t service)
 {
     service_ctx_t *ctx = &s_service_ctx[service];
     const service_desc_t *desc = &s_services[service];
 
-    ESP_RETURN_ON_ERROR(ensure_initialized_locked(service), TAG, "init stage failed");
+    ESP_RETURN_ON_ERROR(ensure_initialized(service), TAG, "init stage failed");
 
+    esp_err_t lock_err = lock_runtime();
+    if (lock_err != ESP_OK) {
+        return lock_err;
+    }
     if (ctx->state == SERVICE_RUNTIME_STATE_RUNNING && !desc->restart_while_running) {
+        unlock_runtime();
         return ESP_OK;
     }
     if (desc->start_fn == NULL) {
         ctx->state = SERVICE_RUNTIME_STATE_RUNNING;
+        unlock_runtime();
         return ESP_OK;
     }
 
     ctx->state = SERVICE_RUNTIME_STATE_STARTING;
+    unlock_runtime();
+
     esp_err_t err = call_lifecycle_fn(desc->start_fn, desc->name, "start");
+    lock_err = lock_runtime();
+    if (lock_err != ESP_OK) {
+        return (err == ESP_OK) ? lock_err : err;
+    }
     if (err != ESP_OK) {
         ctx->state = SERVICE_RUNTIME_STATE_ERROR;
+        unlock_runtime();
         ESP_LOGW(TAG, "start failed for %s: %s", desc->name, esp_err_to_name(err));
         return err;
     }
     ctx->state = SERVICE_RUNTIME_STATE_RUNNING;
+    unlock_runtime();
+
     if (desc->restart_while_running) {
         ESP_LOGI(TAG, "service (re)started: %s", desc->name);
     } else {
@@ -363,39 +409,54 @@ static esp_err_t start_service_locked(service_runtime_id_t service)
     return ESP_OK;
 }
 
-static esp_err_t stop_service_locked(service_runtime_id_t service)
+static esp_err_t stop_service(service_runtime_id_t service)
 {
     service_ctx_t *ctx = &s_service_ctx[service];
     const service_desc_t *desc = &s_services[service];
 
+    esp_err_t lock_err = lock_runtime();
+    if (lock_err != ESP_OK) {
+        return lock_err;
+    }
     if (ctx->state != SERVICE_RUNTIME_STATE_RUNNING) {
+        unlock_runtime();
         return ESP_OK;
     }
     if (!desc->stop_supported || desc->stop_fn == NULL) {
+        unlock_runtime();
         ESP_LOGD(TAG, "service kept running (no stop lifecycle): %s", desc->name);
         return ESP_OK;
     }
 
     ctx->state = SERVICE_RUNTIME_STATE_STOPPING;
+    unlock_runtime();
+
     esp_err_t err = call_lifecycle_fn(desc->stop_fn, desc->name, "stop");
+    lock_err = lock_runtime();
+    if (lock_err != ESP_OK) {
+        return (err == ESP_OK) ? lock_err : err;
+    }
     if (err != ESP_OK) {
         ctx->state = SERVICE_RUNTIME_STATE_ERROR;
+        unlock_runtime();
         ESP_LOGW(TAG, "stop failed for %s: %s", desc->name, esp_err_to_name(err));
         return err;
     }
     ctx->state = SERVICE_RUNTIME_STATE_STOPPED;
+    unlock_runtime();
+
     ESP_LOGI(TAG, "service stopped: %s", desc->name);
     return ESP_OK;
 }
 
-static void rollback_started_services_locked(service_runtime_requirements_t started_mask)
+static void rollback_started_services(service_runtime_requirements_t started_mask)
 {
     for (size_t i = sizeof(s_start_order) / sizeof(s_start_order[0]); i > 0; --i) {
         service_runtime_id_t service = s_start_order[i - 1U];
         if ((started_mask & (1UL << service)) == 0U) {
             continue;
         }
-        esp_err_t err = stop_service_locked(service);
+        esp_err_t err = stop_service(service);
         if (err != ESP_OK) {
             ESP_LOGW(TAG,
                      "rollback: failed to stop %s (%s)",
@@ -405,7 +466,7 @@ static void rollback_started_services_locked(service_runtime_requirements_t star
     }
 }
 
-static service_runtime_requirements_t running_mask_locked(void)
+static service_runtime_requirements_t running_mask_unlocked(void)
 {
     service_runtime_requirements_t mask = 0U;
     for (size_t i = 0; i < SERVICE_RUNTIME_COUNT; ++i) {
@@ -416,7 +477,35 @@ static service_runtime_requirements_t running_mask_locked(void)
     return mask;
 }
 
-static esp_err_t apply_requirements_locked(service_runtime_requirements_t requirements)
+static esp_err_t running_mask_snapshot(service_runtime_requirements_t *out_mask)
+{
+    if (out_mask == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = lock_runtime();
+    if (err != ESP_OK) {
+        return err;
+    }
+    *out_mask = running_mask_unlocked();
+    unlock_runtime();
+    return ESP_OK;
+}
+
+static service_runtime_state_t service_state_snapshot(service_runtime_id_t service)
+{
+    if (service >= SERVICE_RUNTIME_COUNT) {
+        return SERVICE_RUNTIME_STATE_ERROR;
+    }
+    esp_err_t err = lock_runtime();
+    if (err != ESP_OK) {
+        return SERVICE_RUNTIME_STATE_ERROR;
+    }
+    service_runtime_state_t state = s_service_ctx[service].state;
+    unlock_runtime();
+    return state;
+}
+
+static esp_err_t apply_requirements(service_runtime_requirements_t requirements)
 {
     service_runtime_requirements_t started_now_mask = 0U;
 
@@ -425,11 +514,11 @@ static esp_err_t apply_requirements_locked(service_runtime_requirements_t requir
         if (!requirement_enabled(requirements, service)) {
             continue;
         }
-        bool was_running = (s_service_ctx[service].state == SERVICE_RUNTIME_STATE_RUNNING);
-        esp_err_t err = start_service_locked(service);
+        bool was_running = (service_state_snapshot(service) == SERVICE_RUNTIME_STATE_RUNNING);
+        esp_err_t err = start_service(service);
         if (err != ESP_OK) {
             if (s_services[service].start_required) {
-                rollback_started_services_locked(started_now_mask);
+                rollback_started_services(started_now_mask);
                 return err;
             }
             ESP_LOGW(TAG,
@@ -438,7 +527,7 @@ static esp_err_t apply_requirements_locked(service_runtime_requirements_t requir
                      esp_err_to_name(err));
             continue;
         }
-        if (!was_running && s_service_ctx[service].state == SERVICE_RUNTIME_STATE_RUNNING) {
+        if (!was_running && service_state_snapshot(service) == SERVICE_RUNTIME_STATE_RUNNING) {
             started_now_mask |= (1UL << service);
         }
     }
@@ -448,7 +537,7 @@ static esp_err_t apply_requirements_locked(service_runtime_requirements_t requir
         if (requirement_enabled(requirements, service)) {
             continue;
         }
-        esp_err_t err = stop_service_locked(service);
+        esp_err_t err = stop_service(service);
         if (err != ESP_OK) {
             ESP_LOGW(TAG,
                      "service stop failed for %s (%s), continuing mode switch",
@@ -457,7 +546,13 @@ static esp_err_t apply_requirements_locked(service_runtime_requirements_t requir
         }
     }
 
-    s_active_requirements = running_mask_locked();
+    service_runtime_requirements_t running_mask = 0U;
+    ESP_RETURN_ON_ERROR(running_mask_snapshot(&running_mask), TAG, "running mask snapshot failed");
+
+    ESP_RETURN_ON_ERROR(lock_runtime(), TAG, "runtime lock failed");
+    s_active_requirements = running_mask;
+    unlock_runtime();
+
     if (s_active_requirements != requirements) {
         ESP_LOGW(TAG,
                  "runtime mismatch requested=0x%08" PRIx32 " running=0x%08" PRIx32,
@@ -465,6 +560,23 @@ static esp_err_t apply_requirements_locked(service_runtime_requirements_t requir
                  s_active_requirements);
     }
     return ESP_OK;
+}
+
+static esp_err_t set_network_profile_guarded(network_profile_t profile)
+{
+    ESP_RETURN_ON_ERROR(service_lifecycle_guard_enter(), TAG, "lifecycle guard enter failed");
+    esp_err_t err = network_manager_set_desired_profile(profile);
+    service_lifecycle_guard_exit();
+    return err;
+}
+
+static network_profile_t get_current_desired_profile_snapshot(void)
+{
+    network_status_t status = { 0 };
+    if (network_manager_get_status(&status) == ESP_OK) {
+        return status.desired_profile;
+    }
+    return NETWORK_PROFILE_NONE;
 }
 
 esp_err_t service_runtime_init(void)
@@ -475,6 +587,12 @@ esp_err_t service_runtime_init(void)
 
     s_runtime_mutex = xSemaphoreCreateMutex();
     if (s_runtime_mutex == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    s_transition_mutex = xSemaphoreCreateMutex();
+    if (s_transition_mutex == NULL) {
+        vSemaphoreDelete(s_runtime_mutex);
+        s_runtime_mutex = NULL;
         return ESP_ERR_NO_MEM;
     }
 
@@ -492,40 +610,58 @@ esp_err_t service_runtime_apply_mode(orb_mode_t previous_mode, orb_mode_t target
     ESP_RETURN_ON_ERROR(service_runtime_init(), TAG, "runtime init failed");
 
     network_profile_t target_profile = mode_network_profile(target_mode);
-    ESP_RETURN_ON_ERROR(service_lifecycle_guard_enter(), TAG, "lifecycle guard enter failed");
-    esp_err_t set_profile_err = network_manager_set_desired_profile(target_profile);
-    service_lifecycle_guard_exit();
-    ESP_RETURN_ON_ERROR(set_profile_err, TAG, "network desired profile set failed");
-
     const service_runtime_requirements_t requirements = mode_requirements(target_mode);
-    ESP_RETURN_ON_ERROR(lock_runtime(), TAG, "runtime lock failed");
-    service_runtime_requirements_t previous_requirements = running_mask_locked();
-    esp_err_t err = apply_requirements_locked(requirements);
+    ESP_RETURN_ON_ERROR(lock_transition(), TAG, "runtime transition lock failed");
+
+    service_runtime_requirements_t previous_requirements = 0U;
+    esp_err_t mask_err = running_mask_snapshot(&previous_requirements);
+    if (mask_err != ESP_OK) {
+        unlock_transition();
+        return mask_err;
+    }
+
+    network_profile_t previous_profile = get_current_desired_profile_snapshot();
+    if (previous_profile == NETWORK_PROFILE_NONE) {
+        previous_profile = mode_network_profile(previous_mode);
+    }
+
+    /*
+     * Transaction contract for mode/runtime/network boundary:
+     * 1) set desired network profile,
+     * 2) apply service requirements,
+     * 3) rollback both profile and requirements on failure.
+     */
+    esp_err_t set_profile_err = set_network_profile_guarded(target_profile);
+    if (set_profile_err != ESP_OK) {
+        unlock_transition();
+        ESP_LOGW(TAG,
+                 "network desired profile set failed (target=%s): %s",
+                 network_manager_profile_to_str(target_profile),
+                 esp_err_to_name(set_profile_err));
+        return set_profile_err;
+    }
+
+    esp_err_t err = apply_requirements(requirements);
     if (err != ESP_OK) {
         ESP_LOGW(TAG,
                  "apply requirements failed, rolling back to previous mode/runtime: %s",
                  esp_err_to_name(err));
-        network_profile_t previous_profile = mode_network_profile(previous_mode);
-        esp_err_t guard_err = service_lifecycle_guard_enter();
-        esp_err_t net_rb_err = (guard_err == ESP_OK) ? network_manager_set_desired_profile(previous_profile) : guard_err;
-        if (guard_err == ESP_OK) {
-            service_lifecycle_guard_exit();
-        }
+        esp_err_t net_rb_err = set_network_profile_guarded(previous_profile);
         if (net_rb_err != ESP_OK) {
             ESP_LOGW(TAG,
                      "rollback network profile set failed: %s",
                      esp_err_to_name(net_rb_err));
         }
-        esp_err_t req_rb_err = apply_requirements_locked(previous_requirements);
+        esp_err_t req_rb_err = apply_requirements(previous_requirements);
         if (req_rb_err != ESP_OK) {
             ESP_LOGW(TAG,
                      "rollback runtime requirements failed: %s",
                      esp_err_to_name(req_rb_err));
         }
-        unlock_runtime();
+        unlock_transition();
         return err;
     }
-    unlock_runtime();
+    unlock_transition();
 
     ESP_LOGI(TAG, "mode requirements applied: mode=%d req=0x%08" PRIx32, (int)target_mode, requirements);
     return ESP_OK;

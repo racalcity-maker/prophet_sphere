@@ -37,6 +37,7 @@
 
     let sSetStatus = function () { };
     let sPostQuery = postQueryCore;
+    let sUiReady = false;
 
     function getBaseUrl() {
         const el = $("server-tts-url");
@@ -45,6 +46,18 @@
             return "";
         }
         return raw.replace(/\/+$/, "");
+    }
+
+    function ensureBaseUrlOrReport(silent) {
+        const base = getBaseUrl();
+        if (base) {
+            return base;
+        }
+        if (!silent) {
+            setServerStatus("Set Control URL", true);
+            sSetStatus("Set Server Voice Control URL first (example: http://PI_IP:8766)", true);
+        }
+        return "";
     }
 
     function getToken() {
@@ -159,19 +172,9 @@
     }
 
     async function logPortalEvent(op, result, detail) {
-        try {
-            if (typeof sPostQuery !== "function") {
-                return;
-            }
-            await sPostQuery("/api/diag/log", {
-                op: op || "unknown",
-                result: result || "-",
-                target: getBaseUrl() || "-",
-                detail: detail || "-"
-            });
-        } catch (e) {
-            void e;
-        }
+        void op;
+        void result;
+        void detail;
     }
 
     function setValueIfPresent(id, cfg, key) {
@@ -381,6 +384,9 @@
 
     async function loadVoices(options) {
         const silent = !!(options && options.silent);
+        if (!ensureBaseUrlOrReport(silent)) {
+            return {};
+        }
         const selectedBackend = valueFromInput("server-tts-backend", DEFAULTS.tts_backend);
         try {
             const data = await api("/api/tts/voices", "GET");
@@ -416,6 +422,12 @@
     async function loadConfigFromServer(options) {
         const silent = !!(options && options.silent);
         const op = silent ? "server_tts_autoload" : "server_tts_load";
+        if (!ensureBaseUrlOrReport(silent)) {
+            if (!silent) {
+                await logPortalEvent(op, "error", "missing_server_url");
+            }
+            return null;
+        }
         await logPortalEvent(op, "start", "-");
         try {
             saveUiStateToStorage();
@@ -454,6 +466,10 @@
         const opts = options || {};
         sSetStatus = opts.setStatus || function () { };
         sPostQuery = opts.postQuery || postQueryCore;
+        sUiReady = !!$("server-tts-url");
+        if (!sUiReady) {
+            return;
+        }
 
         restoreUiStateFromStorage();
         updateBackendVisibility();
@@ -513,6 +529,10 @@
                     }
                     return v;
                 };
+                if (!ensureBaseUrlOrReport(false)) {
+                    await logPortalEvent("server_tts_apply_save", "error", "missing_server_url");
+                    return;
+                }
                 await logPortalEvent("server_tts_apply_save", "start", "-");
                 try {
                     saveUiStateToStorage();

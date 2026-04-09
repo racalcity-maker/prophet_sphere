@@ -9,6 +9,56 @@
 
 static const char *TAG = LOG_TAG_LED;
 
+typedef struct {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+} led_lottery_color_t;
+
+static const led_lottery_color_t s_lottery_default_colors[ORB_LOTTERY_MAX_TEAMS] = {
+    { 255U, 60U, 40U },
+    { 40U, 255U, 120U },
+    { 70U, 160U, 255U },
+    { 255U, 210U, 40U },
+};
+
+static void led_task_load_lottery_colors_from_config(led_runtime_t *runtime)
+{
+    if (runtime == NULL) {
+        return;
+    }
+
+    uint8_t teams = 2U;
+    uint16_t participants = 0U;
+    if (config_manager_get_offline_lottery_params(&teams, &participants) != ESP_OK) {
+        teams = 2U;
+    }
+    (void)participants;
+    if (teams < 2U) {
+        teams = 2U;
+    }
+    if (teams > ORB_LOTTERY_MAX_TEAMS) {
+        teams = ORB_LOTTERY_MAX_TEAMS;
+    }
+
+    runtime->effects.lottery_team_count = teams;
+    for (uint8_t i = 0U; i < ORB_LOTTERY_MAX_TEAMS; ++i) {
+        runtime->effects.lottery_color_r[i] = s_lottery_default_colors[i].r;
+        runtime->effects.lottery_color_g[i] = s_lottery_default_colors[i].g;
+        runtime->effects.lottery_color_b[i] = s_lottery_default_colors[i].b;
+    }
+
+    for (uint8_t i = 0U; i < teams; ++i) {
+        orb_lottery_team_config_t team = { 0 };
+        if (config_manager_get_offline_lottery_team(i, &team) != ESP_OK) {
+            continue;
+        }
+        runtime->effects.lottery_color_r[i] = team.color_r;
+        runtime->effects.lottery_color_g[i] = team.color_g;
+        runtime->effects.lottery_color_b[i] = team.color_b;
+    }
+}
+
 led_scene_id_t led_task_startup_scene_id(void)
 {
 #if CONFIG_ORB_LED_STARTUP_SCENE_ID > 0
@@ -109,7 +159,14 @@ void led_task_handle_command(led_runtime_t *runtime, const led_command_t *cmd)
     switch (cmd->id) {
     case LED_CMD_PLAY_SCENE: {
         uint32_t new_scene = cmd->payload.play_scene.scene_id;
-        led_task_set_scene_runtime(runtime, new_scene, cmd->payload.play_scene.duration_ms, now_ms, true);
+        bool with_transition = true;
+        if (new_scene == LED_SCENE_LOTTERY_IDLE || new_scene == LED_SCENE_LOTTERY_TEAM_COLOR) {
+            with_transition = false;
+        }
+        led_task_set_scene_runtime(runtime, new_scene, cmd->payload.play_scene.duration_ms, now_ms, with_transition);
+        if (runtime->scene_id == LED_SCENE_LOTTERY_IDLE) {
+            led_task_load_lottery_colors_from_config(runtime);
+        }
         ESP_LOGI(TAG,
                  "PLAY_SCENE id=%" PRIu32 " (%s) duration=%" PRIu32 "ms",
                  runtime->scene_id,
@@ -117,7 +174,7 @@ void led_task_handle_command(led_runtime_t *runtime, const led_command_t *cmd)
                  runtime->scene_duration_ms);
         break;
     }
-    case LED_CMD_STOP:
+    case LED_CMD_CLEAR:
         runtime->scene_id = 0U;
         runtime->scene_duration_ms = 0U;
         runtime->aura_transition_duration_ms = 0U;
@@ -132,7 +189,7 @@ void led_task_handle_command(led_runtime_t *runtime, const led_command_t *cmd)
         led_effects_reset_state(&runtime->effects, now_ms);
         led_task_framebuffer_clear();
         (void)led_output_ws2812_clear(CONFIG_ORB_LED_TX_TIMEOUT_MS);
-        ESP_LOGI(TAG, "STOP");
+        ESP_LOGI(TAG, "CLEAR");
         break;
     case LED_CMD_SET_BRIGHTNESS:
         runtime->brightness = cmd->payload.set_brightness.brightness;
@@ -289,4 +346,5 @@ void led_task_init_runtime_defaults(led_runtime_t *runtime, uint32_t now_ms)
     runtime->audio_reactive_active = false;
     runtime->audio_reactive_level = 0U;
     runtime->audio_reactive_last_update_ms = 0U;
+    led_task_load_lottery_colors_from_config(runtime);
 }

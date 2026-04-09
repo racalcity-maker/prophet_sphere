@@ -2,6 +2,8 @@ idf_component_register(
     SRCS
         "service/led_service.c"
         "task/led_task.c"
+        "task/led_task_state.c"
+        "task/led_task_runner.c"
         "task/led_task_flow.c"
         "task/led_task_render.c"
         "effects/led_effects.c"

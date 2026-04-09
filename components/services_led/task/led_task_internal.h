@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "app_tasking.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "led_effects.h"
 #include "led_scene.h"
 #include "sdkconfig.h"
@@ -83,6 +84,9 @@ typedef struct {
     led_effects_state_t effects;
 } led_runtime_t;
 
+extern TaskHandle_t s_led_task_handle;
+extern volatile bool s_stop_requested;
+extern uint32_t s_last_limit_log_ms;
 extern led_runtime_t s_runtime;
 extern uint8_t s_framebuffer[LED_FRAMEBUFFER_BYTES];
 
@@ -124,5 +128,8 @@ void led_task_maybe_apply_scene_timeout(led_runtime_t *runtime, uint32_t now_ms)
 void led_task_maybe_update_aura_transition(led_runtime_t *runtime, uint32_t now_ms);
 void led_task_handle_command(led_runtime_t *runtime, const led_command_t *cmd);
 void led_task_init_runtime_defaults(led_runtime_t *runtime, uint32_t now_ms);
+
+void led_task_wake(void);
+void led_task_entry(void *arg);
 
 #endif

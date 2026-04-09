@@ -20,10 +20,7 @@ static void load_effective_sta_ssid(char *out_ssid, size_t ssid_len)
     }
     out_ssid[0] = '\0';
 
-    orb_runtime_config_t cfg = { 0 };
-    if (config_manager_get_snapshot(&cfg) == ESP_OK) {
-        strlcpy(out_ssid, cfg.wifi_sta_ssid, ssid_len);
-    }
+    (void)config_manager_get_wifi_sta_credentials(out_ssid, ssid_len, NULL, 0U);
     if (out_ssid[0] == '\0') {
         strlcpy(out_ssid, CONFIG_ORB_NETWORK_STA_SSID, ssid_len);
     }

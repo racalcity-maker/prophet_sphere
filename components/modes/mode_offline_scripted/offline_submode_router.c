@@ -42,11 +42,11 @@ static const offline_submode_handler_t *find_handler(orb_offline_submode_t id)
 
 static const offline_submode_handler_t *resolve_current_handler(void)
 {
-    orb_runtime_config_t cfg = { 0 };
-    if (config_manager_get_snapshot(&cfg) != ESP_OK) {
+    orb_offline_submode_t submode = ORB_OFFLINE_SUBMODE_AURA;
+    if (config_manager_get_offline_submode(&submode) != ESP_OK) {
         return offline_submode_aura_get();
     }
-    return find_handler(cfg.offline_submode);
+    return find_handler(submode);
 }
 
 static esp_err_t call_enter(const offline_submode_handler_t *handler)

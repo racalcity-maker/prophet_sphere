@@ -85,6 +85,12 @@ typedef enum {
     APP_MODE_SEQUENCE_PROPHECY = 2,
 } app_mode_sequence_kind_t;
 
+typedef enum {
+    APP_MODE_LOTTERY_AUDIO_KIND_ASSET = 0,
+    APP_MODE_LOTTERY_AUDIO_KIND_TRACK_PATH = 1,
+    APP_MODE_LOTTERY_AUDIO_KIND_TTS = 2,
+} app_mode_lottery_audio_kind_t;
+
 typedef struct {
     uint32_t scene_id;
     uint32_t duration_ms;

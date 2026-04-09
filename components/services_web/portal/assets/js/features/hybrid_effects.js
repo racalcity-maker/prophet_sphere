@@ -119,6 +119,92 @@
         return normalizeColorHex(text, fallback);
     }
 
+    function setColorControl(colorInputId, hexInputId, colorValue, fallback) {
+        const normalized = normalizeColorHex(colorValue, fallback);
+        const colorInput = $(colorInputId);
+        const hexInput = $(hexInputId);
+        if (colorInput) {
+            colorInput.value = normalized;
+        }
+        if (hexInput) {
+            hexInput.value = normalized.toUpperCase();
+        }
+        return normalized;
+    }
+
+    function readColorControl(colorInputId, hexInputId, fallback) {
+        const colorInput = $(colorInputId);
+        const hexInput = $(hexInputId);
+        const fromHex = hexInput ? hexInput.value : "";
+        const fromColor = colorInput ? colorInput.value : "";
+        return normalizeColorHex(fromHex || fromColor, fallback);
+    }
+
+    function setPaletteControlsEnabled(enabled) {
+        const ids = [
+            "mode-hybrid-effect-color1",
+            "mode-hybrid-effect-color1-hex",
+            "mode-hybrid-effect-color2",
+            "mode-hybrid-effect-color2-hex",
+            "mode-hybrid-effect-color3",
+            "mode-hybrid-effect-color3-hex"
+        ];
+        ids.forEach((id) => {
+            const el = $(id);
+            if (el) {
+                el.disabled = !enabled;
+            }
+        });
+    }
+
+    function updatePalettePreview() {
+        const c1 = normalizeColorHex(state.color1, DEFAULTS.color1).toUpperCase();
+        const c2 = normalizeColorHex(state.color2, DEFAULTS.color2).toUpperCase();
+        const c3 = normalizeColorHex(state.color3, DEFAULTS.color3).toUpperCase();
+        const mode = parseIntBounded(state.paletteMode, 0, 2, DEFAULTS.palette_mode);
+
+        const preview = $("mode-hybrid-effect-palette-preview");
+        const dot1 = $("mode-hybrid-effect-dot1");
+        const dot2 = $("mode-hybrid-effect-dot2");
+        const dot3 = $("mode-hybrid-effect-dot3");
+        const hex1 = $("mode-hybrid-effect-hex1");
+        const hex2 = $("mode-hybrid-effect-hex2");
+        const hex3 = $("mode-hybrid-effect-hex3");
+        const legend3 = $("mode-hybrid-effect-legend3");
+
+        if (dot1) {
+            dot1.style.background = c1;
+        }
+        if (dot2) {
+            dot2.style.background = c2;
+        }
+        if (dot3) {
+            dot3.style.background = c3;
+        }
+        if (hex1) {
+            hex1.textContent = c1;
+        }
+        if (hex2) {
+            hex2.textContent = c2;
+        }
+        if (hex3) {
+            hex3.textContent = c3;
+        }
+
+        if (preview) {
+            if (mode === PALETTE_MODE.rainbow) {
+                preview.style.background = "linear-gradient(90deg,#ff0040 0%,#ff8a00 16%,#ffd400 32%,#00d26a 48%,#00b8ff 64%,#5a78ff 80%,#c93cff 100%)";
+            } else if (mode === PALETTE_MODE.duo) {
+                preview.style.background = "linear-gradient(90deg," + c1 + " 0%," + c2 + " 100%)";
+            } else {
+                preview.style.background = "linear-gradient(90deg," + c1 + " 0%," + c2 + " 50%," + c3 + " 100%)";
+            }
+        }
+
+        setBlockVisible("mode-hybrid-effect-legend3", mode === PALETTE_MODE.trio);
+        setPaletteControlsEnabled(mode !== PALETTE_MODE.rainbow);
+    }
+
     function getTarget() {
         const target = valueFromInput("mode-hybrid-effect-target", TARGET_DEFAULT).trim().toLowerCase();
         return target === "talk" ? "talk" : "idle";
@@ -144,6 +230,7 @@
         const paletteMode = parseIntBounded(state.paletteMode, 0, 2, DEFAULTS.palette_mode);
         setBlockVisible("mode-hybrid-effect-color3-row", paletteMode === PALETTE_MODE.trio);
         setBlockVisible("mode-hybrid-effect-params-block", !!p.hasParams);
+        updatePalettePreview();
     }
 
     function applyConfig(cfg) {
@@ -197,9 +284,24 @@
         setValue("mode-hybrid-effect-scale-range", state.scale, DEFAULTS.scale);
         setValue("mode-hybrid-effect-scale-value", state.scale, DEFAULTS.scale);
         setValue("mode-hybrid-effect-palette-mode", state.paletteMode, DEFAULTS.palette_mode);
-        setValue("mode-hybrid-effect-color1", state.color1, DEFAULTS.color1);
-        setValue("mode-hybrid-effect-color2", state.color2, DEFAULTS.color2);
-        setValue("mode-hybrid-effect-color3", state.color3, DEFAULTS.color3);
+        state.color1 = setColorControl(
+            "mode-hybrid-effect-color1",
+            "mode-hybrid-effect-color1-hex",
+            state.color1,
+            DEFAULTS.color1
+        );
+        state.color2 = setColorControl(
+            "mode-hybrid-effect-color2",
+            "mode-hybrid-effect-color2-hex",
+            state.color2,
+            DEFAULTS.color2
+        );
+        state.color3 = setColorControl(
+            "mode-hybrid-effect-color3",
+            "mode-hybrid-effect-color3-hex",
+            state.color3,
+            DEFAULTS.color3
+        );
 
         const targetEl = $("mode-hybrid-effect-target");
         if (targetEl && targetEl.value !== "idle" && targetEl.value !== "talk") {
@@ -228,10 +330,6 @@
         const scaleRange = $("mode-hybrid-effect-scale-range");
         const scaleValue = $("mode-hybrid-effect-scale-value");
         const paletteModeEl = $("mode-hybrid-effect-palette-mode");
-        const color1El = $("mode-hybrid-effect-color1");
-        const color2El = $("mode-hybrid-effect-color2");
-        const color3El = $("mode-hybrid-effect-color3");
-
         const target = getTarget();
         const selectedSceneId = parseIntBounded(
             sceneEl ? sceneEl.value : getSceneForTarget(target),
@@ -286,19 +384,14 @@
         state.intensity = intensity;
         state.scale = scale;
         state.paletteMode = paletteMode;
-        state.color1 = normalizeColorHex(color1El ? color1El.value : state.color1, DEFAULTS.color1);
-        state.color2 = normalizeColorHex(color2El ? color2El.value : state.color2, DEFAULTS.color2);
-        state.color3 = normalizeColorHex(color3El ? color3El.value : state.color3, DEFAULTS.color3);
+        state.color1 = readColorControl("mode-hybrid-effect-color1", "mode-hybrid-effect-color1-hex", DEFAULTS.color1);
+        state.color2 = readColorControl("mode-hybrid-effect-color2", "mode-hybrid-effect-color2-hex", DEFAULTS.color2);
+        state.color3 = readColorControl("mode-hybrid-effect-color3", "mode-hybrid-effect-color3-hex", DEFAULTS.color3);
 
-        if (color1El) {
-            color1El.value = state.color1;
-        }
-        if (color2El) {
-            color2El.value = state.color2;
-        }
-        if (color3El) {
-            color3El.value = state.color3;
-        }
+        state.color1 = setColorControl("mode-hybrid-effect-color1", "mode-hybrid-effect-color1-hex", state.color1, DEFAULTS.color1);
+        state.color2 = setColorControl("mode-hybrid-effect-color2", "mode-hybrid-effect-color2-hex", state.color2, DEFAULTS.color2);
+        state.color3 = setColorControl("mode-hybrid-effect-color3", "mode-hybrid-effect-color3-hex", state.color3, DEFAULTS.color3);
+        updatePalettePreview();
 
         const c1 = hexToRgb(state.color1);
         const c2 = hexToRgb(state.color2);
@@ -363,6 +456,36 @@
                 updateUiVisibility();
             });
         }
+
+        function bindColorPair(colorId, hexId, fallback, stateKey) {
+            const colorEl = $(colorId);
+            const hexEl = $(hexId);
+            if (colorEl) {
+                colorEl.addEventListener("input", () => {
+                    const normalized = setColorControl(colorId, hexId, colorEl.value, fallback);
+                    state[stateKey] = normalized;
+                    updatePalettePreview();
+                });
+            }
+            if (hexEl) {
+                hexEl.addEventListener("input", () => {
+                    const normalized = normalizeColorHex(hexEl.value, fallback);
+                    state[stateKey] = normalized;
+                    setColorControl(colorId, hexId, normalized, fallback);
+                    updatePalettePreview();
+                });
+                hexEl.addEventListener("blur", () => {
+                    const normalized = normalizeColorHex(hexEl.value, fallback);
+                    state[stateKey] = normalized;
+                    setColorControl(colorId, hexId, normalized, fallback);
+                    updatePalettePreview();
+                });
+            }
+        }
+
+        bindColorPair("mode-hybrid-effect-color1", "mode-hybrid-effect-color1-hex", DEFAULTS.color1, "color1");
+        bindColorPair("mode-hybrid-effect-color2", "mode-hybrid-effect-color2-hex", DEFAULTS.color2, "color2");
+        bindColorPair("mode-hybrid-effect-color3", "mode-hybrid-effect-color3-hex", DEFAULTS.color3, "color3");
 
         if (previewBtn) {
             previewBtn.addEventListener("click", async () => {

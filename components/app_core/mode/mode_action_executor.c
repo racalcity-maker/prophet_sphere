@@ -3,21 +3,18 @@
 
 #include <inttypes.h>
 #include <string.h>
+#include "audio_service.h"
+#include "audio_types.h"
 #include "config_manager.h"
 #include "control_dispatch.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "interaction_sequence.h"
 #include "log_tags.h"
 #include "orb_led_scenes.h"
-#include "sdkconfig.h"
-#include "session_controller.h"
 
 static const char *TAG = LOG_TAG_MODE_MANAGER;
-static const uint32_t MODE_SWITCH_QUICK_QUEUE_TIMEOUT_MS = 5U;
 
 typedef struct {
     const char *name;
@@ -51,42 +48,6 @@ static const aura_color_entry_t *select_random_aura_color(void)
     return &s_aura_colors[idx];
 }
 
-static void queue_audio_stop_quick(void)
-{
-    (void)MODE_SWITCH_QUICK_QUEUE_TIMEOUT_MS;
-    esp_err_t err = control_dispatch_queue_audio_stop();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "quick queue audio stop failed: %s", esp_err_to_name(err));
-    }
-}
-
-static void queue_audio_pcm_stop_quick(void)
-{
-    (void)MODE_SWITCH_QUICK_QUEUE_TIMEOUT_MS;
-    esp_err_t err = control_dispatch_queue_audio_pcm_stream_stop();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "quick queue audio pcm stop failed: %s", esp_err_to_name(err));
-    }
-}
-
-static void queue_mic_stop_capture_quick(void)
-{
-    (void)MODE_SWITCH_QUICK_QUEUE_TIMEOUT_MS;
-    esp_err_t err = control_dispatch_queue_mic_stop_capture();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "quick queue mic stop capture failed: %s", esp_err_to_name(err));
-    }
-}
-
-static void queue_mic_loopback_stop_quick(void)
-{
-    (void)MODE_SWITCH_QUICK_QUEUE_TIMEOUT_MS;
-    esp_err_t err = control_dispatch_queue_mic_loopback_stop();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "quick queue mic loopback stop failed: %s", esp_err_to_name(err));
-    }
-}
-
 esp_err_t mode_action_executor_init(mode_action_executor_t *executor)
 {
     if (executor == NULL) {
@@ -111,34 +72,10 @@ void mode_action_executor_reset(mode_action_executor_t *executor)
     (void)config_manager_set_aura_selected_color("");
 }
 
-esp_err_t mode_action_executor_prepare_for_mode_switch(mode_action_executor_t *executor, mode_timers_t *timers)
-{
-    if (executor == NULL || timers == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    (void)control_dispatch_queue_led_stop();
-    queue_audio_stop_quick();
-    queue_audio_pcm_stop_quick();
-    queue_mic_stop_capture_quick();
-    queue_mic_loopback_stop_quick();
-    (void)mode_timers_stop_all(timers);
-
-    (void)session_controller_reset_to_idle();
-    (void)interaction_sequence_reset();
-    mode_action_executor_reset(executor);
-
-    orb_runtime_config_t cfg = { 0 };
-    uint8_t brightness = (config_manager_get_snapshot(&cfg) == ESP_OK) ? cfg.led_brightness : CONFIG_ORB_LED_DEFAULT_BRIGHTNESS;
-    (void)control_dispatch_queue_led_brightness(brightness);
-    return ESP_OK;
-}
-
 esp_err_t mode_action_executor_before_second_hook(mode_action_executor_t *executor,
                                                   uint32_t second_asset_id,
                                                   uint32_t gap_ms)
 {
-    (void)second_asset_id;
     if (executor == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -155,7 +92,11 @@ esp_err_t mode_action_executor_before_second_hook(mode_action_executor_t *execut
     ESP_RETURN_ON_ERROR(control_dispatch_queue_led_scene(ORB_LED_SCENE_ID_AURA_COLOR_BREATHE, 0U), TAG, "set aura scene failed");
     ESP_RETURN_ON_ERROR(control_dispatch_queue_led_aura_color(color->r, color->g, color->b, gap_ms), TAG, "set aura color failed");
 
-    ESP_LOGI(TAG, "aura color selected: %s (ramp=%" PRIu32 "ms)", color->name, gap_ms);
+    ESP_LOGI(TAG,
+             "aura color selected: %s before second asset=%" PRIu32 " (ramp=%" PRIu32 "ms)",
+             color->name,
+             second_asset_id,
+             gap_ms);
     return ESP_OK;
 }
 
@@ -193,8 +134,10 @@ esp_err_t mode_action_executor_preprocess_event(mode_action_executor_t *executor
     if (event->id == APP_EVENT_TIMER_EXPIRED &&
         event->payload.scalar.code == (int32_t)APP_TIMER_KIND_GRUMBLE_FADE) {
         (void)control_dispatch_queue_led_scene(idle_scene_id, 0U);
-        orb_runtime_config_t cfg = { 0 };
-        uint8_t brightness = (config_manager_get_snapshot(&cfg) == ESP_OK) ? cfg.led_brightness : CONFIG_ORB_LED_DEFAULT_BRIGHTNESS;
+        uint8_t brightness = CONFIG_ORB_LED_DEFAULT_BRIGHTNESS;
+        if (config_manager_get_led_brightness(&brightness) != ESP_OK) {
+            brightness = CONFIG_ORB_LED_DEFAULT_BRIGHTNESS;
+        }
         (void)control_dispatch_queue_led_brightness(brightness);
         *consumed = true;
         return ESP_OK;
@@ -363,6 +306,40 @@ esp_err_t mode_action_executor_handle_action(mode_action_executor_t *executor,
         ESP_RETURN_ON_ERROR(control_dispatch_queue_led_scene(action->led.scene_id, action->led.duration_ms),
                             TAG,
                             "lottery sorting scene failed");
+        if (action->audio.asset_id_2 == (uint32_t)APP_MODE_LOTTERY_AUDIO_KIND_TTS) {
+            if (action->mic.tts_text[0] == '\0') {
+                return ESP_ERR_INVALID_ARG;
+            }
+            uint32_t timeout_ms = (action->mic.tts_timeout_ms > 0U) ? action->mic.tts_timeout_ms : 90000U;
+            esp_err_t stop_err = control_dispatch_queue_audio_stop();
+            if (stop_err != ESP_OK) {
+                ESP_LOGW(TAG, "lottery sorting tts pre-stop audio failed: %s", esp_err_to_name(stop_err));
+            }
+            esp_err_t pcm_err = control_dispatch_queue_audio_pcm_stream_start();
+            if (pcm_err != ESP_OK) {
+                ESP_LOGW(TAG, "lottery sorting tts pcm stream start failed: %s", esp_err_to_name(pcm_err));
+                return pcm_err;
+            }
+            esp_err_t tts_err = control_dispatch_queue_mic_tts_play_text(action->mic.tts_text, timeout_ms);
+            if (tts_err == ESP_OK) {
+                return ESP_OK;
+            }
+            (void)control_dispatch_queue_audio_pcm_stream_stop();
+            ESP_LOGW(TAG, "lottery sorting tts enqueue failed: %s", esp_err_to_name(tts_err));
+            return tts_err;
+        }
+        if (action->audio.asset_id_2 == (uint32_t)APP_MODE_LOTTERY_AUDIO_KIND_TRACK_PATH) {
+            if (action->mic.tts_text[0] == '\0') {
+                return ESP_ERR_INVALID_ARG;
+            }
+            ESP_RETURN_ON_ERROR(audio_service_set_dynamic_asset_path(AUDIO_ASSET_DYNAMIC_SLOT1, action->mic.tts_text),
+                                TAG,
+                                "lottery sorting dynamic track set failed");
+            ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_asset((uint32_t)AUDIO_ASSET_DYNAMIC_SLOT1),
+                                TAG,
+                                "lottery sorting dynamic track play failed");
+            return ESP_OK;
+        }
         ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_asset(action->audio.asset_id), TAG, "lottery sorting audio failed");
         return ESP_OK;
     case APP_MODE_ACTION_LOTTERY_ASSIGN_TEAM:
@@ -373,6 +350,40 @@ esp_err_t mode_action_executor_handle_action(mode_action_executor_t *executor,
         ESP_RETURN_ON_ERROR(control_dispatch_queue_led_aura_color(action->led.color_r, action->led.color_g, action->led.color_b, 0U),
                             TAG,
                             "lottery assign color failed");
+        if (action->audio.asset_id_2 == (uint32_t)APP_MODE_LOTTERY_AUDIO_KIND_TTS) {
+            if (action->mic.tts_text[0] == '\0') {
+                return ESP_ERR_INVALID_ARG;
+            }
+            uint32_t timeout_ms = (action->mic.tts_timeout_ms > 0U) ? action->mic.tts_timeout_ms : 90000U;
+            esp_err_t stop_err = control_dispatch_queue_audio_stop();
+            if (stop_err != ESP_OK) {
+                ESP_LOGW(TAG, "lottery tts pre-stop audio failed: %s", esp_err_to_name(stop_err));
+            }
+            esp_err_t pcm_err = control_dispatch_queue_audio_pcm_stream_start();
+            if (pcm_err != ESP_OK) {
+                ESP_LOGW(TAG, "lottery tts pcm stream start failed: %s", esp_err_to_name(pcm_err));
+                return pcm_err;
+            }
+            esp_err_t tts_err = control_dispatch_queue_mic_tts_play_text(action->mic.tts_text, timeout_ms);
+            if (tts_err == ESP_OK) {
+                return ESP_OK;
+            }
+            (void)control_dispatch_queue_audio_pcm_stream_stop();
+            ESP_LOGW(TAG, "lottery tts enqueue failed: %s", esp_err_to_name(tts_err));
+            return tts_err;
+        }
+        if (action->audio.asset_id_2 == (uint32_t)APP_MODE_LOTTERY_AUDIO_KIND_TRACK_PATH) {
+            if (action->mic.tts_text[0] == '\0') {
+                return ESP_ERR_INVALID_ARG;
+            }
+            ESP_RETURN_ON_ERROR(audio_service_set_dynamic_asset_path(AUDIO_ASSET_DYNAMIC_SLOT1, action->mic.tts_text),
+                                TAG,
+                                "lottery dynamic track set failed");
+            ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_asset((uint32_t)AUDIO_ASSET_DYNAMIC_SLOT1),
+                                TAG,
+                                "lottery dynamic track play failed");
+            return ESP_OK;
+        }
         ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_asset(action->audio.asset_id), TAG, "lottery team audio failed");
         return ESP_OK;
     case APP_MODE_ACTION_LOTTERY_ABORT:

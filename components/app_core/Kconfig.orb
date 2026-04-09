@@ -184,14 +184,14 @@ menu "Logging Configuration"
 
 config ORB_TOUCH_ONLY_LOG_MODE
     bool "Touch-only INFO logs after startup (others WARN)"
-    default y
+    default n
     help
         Reduces runtime log noise for touch bring-up:
         keeps touch_service at INFO and sets all other tags to WARN.
 
 config ORB_MEM_MONITOR_ENABLE
     bool "Enable periodic memory monitor logs"
-    default y
+    default n
     help
         Logs free heap and largest free block for total heap, internal SRAM,
         and PSRAM at fixed intervals.

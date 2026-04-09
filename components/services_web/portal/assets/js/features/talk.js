@@ -98,27 +98,9 @@
         return out;
     }
 
-    function talkLiveGetUserMediaLegacy(constraints) {
-        const getLegacy =
-            navigator.getUserMedia ||
-            navigator.webkitGetUserMedia ||
-            navigator.mozGetUserMedia ||
-            navigator.msGetUserMedia;
-        if (!getLegacy) {
-            return null;
-        }
-        return new Promise((resolve, reject) => {
-            getLegacy.call(navigator, constraints, resolve, reject);
-        });
-    }
-
     async function talkLiveGetUserMedia(constraints) {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             return navigator.mediaDevices.getUserMedia(constraints);
-        }
-        const legacyPromise = talkLiveGetUserMediaLegacy(constraints);
-        if (legacyPromise) {
-            return legacyPromise;
         }
         if (window.isSecureContext === false) {
             throw new Error("mic_requires_https");
@@ -227,12 +209,10 @@
                 video: false
             });
 
-            const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-            if (!AudioContextCtor) {
+            if (!window.AudioContext) {
                 throw new Error("audio_context_not_supported");
             }
-
-            audioCtx = new AudioContextCtor();
+            audioCtx = new window.AudioContext();
             if (audioCtx.state === "suspended") {
                 await audioCtx.resume();
             }

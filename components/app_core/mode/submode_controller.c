@@ -44,9 +44,9 @@ esp_err_t submode_controller_init(void)
 uint32_t submode_controller_idle_scene_for_mode(orb_mode_t mode)
 {
     if (mode == ORB_MODE_OFFLINE_SCRIPTED) {
-        orb_runtime_config_t cfg = { 0 };
-        if (config_manager_get_snapshot(&cfg) == ESP_OK) {
-            switch (cfg.offline_submode) {
+        orb_offline_submode_t submode = ORB_OFFLINE_SUBMODE_AURA;
+        if (config_manager_get_offline_submode(&submode) == ESP_OK) {
+            switch (submode) {
             case ORB_OFFLINE_SUBMODE_LOTTERY:
                 return lottery_idle_scene();
             case ORB_OFFLINE_SUBMODE_PROPHECY:
@@ -60,9 +60,9 @@ uint32_t submode_controller_idle_scene_for_mode(orb_mode_t mode)
     }
 
     if (mode == ORB_MODE_HYBRID_AI) {
-        orb_runtime_config_t cfg = { 0 };
-        if (config_manager_get_snapshot(&cfg) == ESP_OK) {
-            return cfg.hybrid_effect_idle_scene_id;
+        uint32_t scene = ORB_LED_SCENE_ID_HYBRID_IDLE_SLOW_BREATHE;
+        if (config_manager_get_hybrid_effect_idle_scene_id(&scene) == ESP_OK) {
+            return scene;
         }
         return ORB_LED_SCENE_ID_HYBRID_IDLE_SLOW_BREATHE;
     }
@@ -77,20 +77,18 @@ bool submode_controller_is_offline_lottery_active(orb_mode_t mode)
     if (mode != ORB_MODE_OFFLINE_SCRIPTED) {
         return false;
     }
-    orb_runtime_config_t cfg = { 0 };
-    if (config_manager_get_snapshot(&cfg) != ESP_OK) {
+    orb_offline_submode_t submode = ORB_OFFLINE_SUBMODE_AURA;
+    if (config_manager_get_offline_submode(&submode) != ESP_OK) {
         return false;
     }
-    return cfg.offline_submode == ORB_OFFLINE_SUBMODE_LOTTERY;
+    return submode == ORB_OFFLINE_SUBMODE_LOTTERY;
 }
 
 esp_err_t submode_controller_handle_request(orb_mode_t mode)
 {
     if (mode == ORB_MODE_OFFLINE_SCRIPTED) {
-        orb_runtime_config_t cfg = { 0 };
-        ESP_RETURN_ON_ERROR(config_manager_get_snapshot(&cfg), TAG, "config snapshot failed");
-
-        orb_offline_submode_t prev = cfg.offline_submode;
+        orb_offline_submode_t prev = ORB_OFFLINE_SUBMODE_AURA;
+        ESP_RETURN_ON_ERROR(config_manager_get_offline_submode(&prev), TAG, "config read failed");
         orb_offline_submode_t next = next_offline_submode(prev);
         ESP_RETURN_ON_ERROR(config_manager_set_offline_submode(next), TAG, "set offline submode failed");
 

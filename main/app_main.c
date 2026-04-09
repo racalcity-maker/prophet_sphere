@@ -136,7 +136,7 @@ void app_main(void)
         return;
     }
 
-    orb_runtime_config_t cfg = { 0 };
+    static orb_runtime_config_t cfg;
     if (config_manager_get_snapshot(&cfg) == ESP_OK) {
         ESP_LOGI(TAG,
                  "startup config: offline_submode=%s aura_gap=%" PRIu32 "ms",

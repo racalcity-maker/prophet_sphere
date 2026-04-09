@@ -11,6 +11,7 @@
 #include "log_tags.h"
 
 static const char *TAG = LOG_TAG_AUDIO;
+static audio_worker_shared_state_t *s_shared;
 
 /* Fallback melody: do-re-mi-do-re-do, repeated 2 times; 180 ms per note + 40 ms gap. */
 #define AUDIO_FALLBACK_MELODY_NOTE_MS 180U
@@ -85,7 +86,10 @@ static esp_err_t tone_write_chunk(uint32_t frame_count)
             s_tone_buffer[i] = (s_tone_phase_q32 & 0x80000000U) ? (int16_t)amplitude : (int16_t)(-amplitude);
         }
 
-        esp_err_t err = audio_worker_write_mixed_output(s_tone_buffer, chunk, true);
+        if (s_shared == NULL) {
+            return ESP_ERR_INVALID_STATE;
+        }
+        esp_err_t err = audio_worker_write_mixed_output(s_shared, s_tone_buffer, chunk, true);
         if (err != ESP_OK) {
             return err;
         }
@@ -138,8 +142,9 @@ static void simulated_melody_update(TickType_t playback_start_tick, TickType_t n
 }
 #endif
 
-void audio_worker_sim_init(void)
+void audio_worker_sim_init(audio_worker_shared_state_t *shared)
 {
+    s_shared = shared;
 #if CONFIG_ORB_AUDIO_TEST_TONE_ENABLE
     s_tone_phase_q32 = 0U;
     s_tone_inc_q32 = 0U;
@@ -170,7 +175,9 @@ void audio_worker_sim_pump(TickType_t playback_start_tick)
     tone_pump();
 #else
     (void)playback_start_tick;
-    (void)audio_worker_write_mixed_output(NULL, 0U, false);
+    if (s_shared != NULL) {
+        (void)audio_worker_write_mixed_output(s_shared, NULL, 0U, false);
+    }
 #endif
 }
 
