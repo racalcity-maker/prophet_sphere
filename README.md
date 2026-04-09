@@ -4,6 +4,16 @@
 This project is a modular ESP32-S3 baseline for an interactive talking orb device.
 It provides a safe FreeRTOS ownership and queue architecture first, with hardware/network logic intentionally stubbed for incremental implementation.
 
+## Documentation
+- Architecture and dependency map: `docs/architecture_dependencies.md`
+- Raspberry Pi WS server runbook: `docs/server_run.md`
+- KWS training and model pipeline: `kws/README.md`
+- Oracle text bank (v2): `docs/oracle_texts_jsons/`
+
+Dependency source of truth:
+- ESP-IDF component dependencies are defined in `components/*/CMakeLists.txt` (`REQUIRES` / `PRIV_REQUIRES`).
+- Python WS server dependencies are defined in `kws/pi_ws/requirements.txt`.
+
 ## Concurrency And Ownership Model
 - `app_control_task`: only owner of global orchestration, FSM, session lifecycle, mode transitions.
 - `touch_task`: only producer of normalized touch events.
