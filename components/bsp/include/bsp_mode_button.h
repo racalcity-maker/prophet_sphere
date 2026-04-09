@@ -7,11 +7,14 @@
 extern "C" {
 #endif
 
+typedef void (*bsp_mode_button_pressed_cb_t)(void *user_ctx);
+
 /*
  * Hardware mode button (active-low, button to GND).
- * This module never performs mode switch directly.
- * It only posts queue-safe mode switch requests via mode_manager API.
+ * BSP does not depend on app/mode orchestration.
+ * App layer should register callback and decide what to do on press.
  */
+esp_err_t bsp_mode_button_set_pressed_callback(bsp_mode_button_pressed_cb_t callback, void *user_ctx);
 esp_err_t bsp_mode_button_start(void);
 
 #ifdef __cplusplus
@@ -19,4 +22,3 @@ esp_err_t bsp_mode_button_start(void);
 #endif
 
 #endif
-

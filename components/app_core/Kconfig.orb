@@ -271,6 +271,15 @@ config ORB_AUDIO_COMMAND_QUEUE_LENGTH
     range 4 128
     default 16
 
+config ORB_AUDIO_PCM_CHUNK_POOL_LENGTH
+    int "Audio PCM chunk pool length"
+    range 4 256
+    default 8
+    help
+        Number of reusable PCM chunk buffers for stream pointer-passing.
+        Each chunk stores up to 1024 int16 samples (~2 KB). Increase for
+        heavier concurrent live/tts streaming; decrease to save RAM.
+
 config ORB_AI_COMMAND_QUEUE_LENGTH
     int "AI command queue length"
     range 4 128

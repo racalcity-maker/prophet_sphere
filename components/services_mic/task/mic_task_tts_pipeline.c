@@ -82,12 +82,7 @@ static bool push_pcm_stream_chunk(const int16_t *samples, uint16_t sample_count,
     if (samples == NULL || sample_count == 0U || sample_count > AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES) {
         return false;
     }
-
-    audio_command_t cmd = { 0 };
-    cmd.id = AUDIO_CMD_PCM_STREAM_CHUNK;
-    cmd.payload.pcm_stream_chunk.sample_count = sample_count;
-    memcpy(cmd.payload.pcm_stream_chunk.samples, samples, (size_t)sample_count * sizeof(int16_t));
-    return (app_tasking_send_audio_command(&cmd, timeout_ms) == ESP_OK);
+    return (app_tasking_send_audio_pcm_chunk_copy(samples, sample_count, timeout_ms) == ESP_OK);
 }
 
 static void enqueue_pcm_tail_silence_best_effort(void)

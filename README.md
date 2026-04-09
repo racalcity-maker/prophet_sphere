@@ -61,6 +61,7 @@ Dependency source of truth:
 - `services_mqtt`: MQTT lifecycle service, posts MQTT command events.
 - `services_ai`: queue-based AI frontend/task + prompt engine.
 - `services_web`: local HTTP server (`esp_http_server`) with queue-safe REST control endpoints.
+  Write-path actions for audio/LED/mic are routed through `app_tasking` command queues (no direct service control from HTTP handlers).
 - `modes`: offline/hybrid/installation mode implementations behind `app_mode_t`.
   Offline submodes are centralized under `modes/mode_offline_scripted/`:
   `offline_submode_router.c` + one file per submode (`aura`, `lottery`, `prophecy`).
@@ -91,6 +92,9 @@ Dependency source of truth:
 2. Configure:
    - `idf.py set-target esp32s3`
    - `idf.py menuconfig`
+   - If HTTPS cert/key is missing, they are auto-generated during CMake configure.
+     Manual fallback:
+     - `python kws/scripts/gen_web_tls_cert.py --cert-dir components/services_web/certs`
 3. Build:
    - `idf.py build`
 4. Flash/monitor:

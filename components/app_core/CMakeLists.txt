@@ -31,6 +31,4 @@ idf_component_register(
         common
         modes
         services_config
-    PRIV_REQUIRES
-        services_audio
 )

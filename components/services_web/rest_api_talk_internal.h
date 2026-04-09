@@ -8,8 +8,6 @@
 #include "config_manager.h"
 #include "esp_err.h"
 #include "esp_http_server.h"
-#include "mic_service.h"
-#include "mic_types.h"
 #include "sdkconfig.h"
 #include "session_controller.h"
 

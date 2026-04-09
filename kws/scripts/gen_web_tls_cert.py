@@ -3,13 +3,28 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import shutil
+import subprocess
+import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+_HAS_CRYPTO = True
+_CRYPTO_IMPORT_ERROR = ""
+try:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+except Exception as exc:  # pragma: no cover - environment dependent
+    _HAS_CRYPTO = False
+    _CRYPTO_IMPORT_ERROR = str(exc)
+    x509 = None  # type: ignore[assignment]
+    hashes = None  # type: ignore[assignment]
+    serialization = None  # type: ignore[assignment]
+    ec = None  # type: ignore[assignment]
+    ExtendedKeyUsageOID = None  # type: ignore[assignment]
+    NameOID = None  # type: ignore[assignment]
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def build_sans(cn: str, dns_list: list[str] | None, ip_list: list[str] | None) -> list[x509.GeneralName]:
+def build_san_values(cn: str, dns_list: list[str] | None, ip_list: list[str] | None) -> tuple[list[str], list[str]]:
     dns_values = dns_list[:] if dns_list else []
     ip_values = ip_list[:] if ip_list else []
     if cn and cn not in dns_values:
@@ -66,6 +81,13 @@ def build_sans(cn: str, dns_list: list[str] | None, ip_list: list[str] | None) -
         ip_values.append("127.0.0.1")
     if "192.168.4.1" not in ip_values:
         ip_values.append("192.168.4.1")
+    return dns_values, ip_values
+
+
+def build_sans(cn: str, dns_list: list[str] | None, ip_list: list[str] | None) -> list[x509.GeneralName]:
+    if x509 is None:
+        raise RuntimeError("cryptography backend is not available")
+    dns_values, ip_values = build_san_values(cn, dns_list, ip_list)
 
     out: list[x509.GeneralName] = []
     for d in dns_values:
@@ -73,6 +95,92 @@ def build_sans(cn: str, dns_list: list[str] | None, ip_list: list[str] | None) -
     for ip_text in ip_values:
         out.append(x509.IPAddress(ipaddress.ip_address(ip_text)))
     return out
+
+
+def _openssl_path() -> str:
+    openssl_bin = shutil.which("openssl")
+    if not openssl_bin:
+        raise RuntimeError(
+            "openssl not found in PATH. Install OpenSSL or install Python package 'cryptography'."
+        )
+    return openssl_bin
+
+
+def _write_openssl_config(path: Path, cn: str, dns_values: list[str], ip_values: list[str]) -> None:
+    alt_lines: list[str] = []
+    dns_idx = 1
+    ip_idx = 1
+    for dns in dns_values:
+        alt_lines.append(f"DNS.{dns_idx} = {dns}")
+        dns_idx += 1
+    for ip_text in ip_values:
+        alt_lines.append(f"IP.{ip_idx} = {ip_text}")
+        ip_idx += 1
+
+    config_text = textwrap.dedent(
+        f"""\
+        [req]
+        default_bits = 2048
+        prompt = no
+        default_md = sha256
+        x509_extensions = v3_req
+        distinguished_name = dn
+
+        [dn]
+        CN = {cn}
+
+        [v3_req]
+        keyUsage = keyEncipherment, digitalSignature
+        extendedKeyUsage = serverAuth
+        subjectAltName = @alt_names
+
+        [alt_names]
+        {chr(10).join(alt_lines)}
+        """
+    )
+    path.write_text(config_text, encoding="utf-8")
+
+
+def _run_checked(cmd: list[str]) -> None:
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"command failed ({proc.returncode}): {' '.join(cmd)}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        )
+
+
+def generate_with_openssl(args: argparse.Namespace, cert_dir: Path, cert_path: Path, key_path: Path) -> None:
+    openssl_bin = _openssl_path()
+    dns_values, ip_values = build_san_values(args.cn, args.dns, args.ip)
+    cfg_path = cert_dir / "openssl_orb_autogen.cnf"
+    _write_openssl_config(cfg_path, args.cn, dns_values, ip_values)
+
+    _run_checked([
+        openssl_bin,
+        "ecparam",
+        "-genkey",
+        "-name",
+        "prime256v1",
+        "-noout",
+        "-out",
+        str(key_path),
+    ])
+    _run_checked([
+        openssl_bin,
+        "req",
+        "-new",
+        "-x509",
+        "-key",
+        str(key_path),
+        "-out",
+        str(cert_path),
+        "-days",
+        str(max(1, args.days)),
+        "-config",
+        str(cfg_path),
+        "-extensions",
+        "v3_req",
+    ])
 
 
 def rotate_file(path: Path, *, keep_backup: bool) -> None:
@@ -137,6 +245,24 @@ def main() -> int:
 
     rotate_file(cert_path, keep_backup=args.backup)
     rotate_file(key_path, keep_backup=args.backup)
+
+    if not _HAS_CRYPTO:
+        if args.ca:
+            print("error: --ca mode requires Python package 'cryptography'.")
+            print(f"import error: {_CRYPTO_IMPORT_ERROR}")
+            return 2
+        try:
+            generate_with_openssl(args, cert_dir, cert_path, key_path)
+        except Exception as exc:
+            print("error: TLS cert/key generation failed without cryptography backend.")
+            print(str(exc))
+            return 2
+        dns_values, ip_values = build_san_values(args.cn, args.dns, args.ip)
+        print(f"written cert: {cert_path}")
+        print(f"written key:  {key_path}")
+        print(f"SAN count: {len(dns_values) + len(ip_values)}")
+        print("backend: openssl (cryptography module unavailable)")
+        return 0
 
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, args.cn)])

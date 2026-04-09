@@ -21,6 +21,7 @@ esp_err_t control_dispatch_queue_led_audio_level(uint8_t level);
 esp_err_t control_dispatch_queue_audio_asset(uint32_t asset_id);
 esp_err_t control_dispatch_queue_audio_stop(void);
 esp_err_t control_dispatch_queue_audio_set_volume(uint8_t volume);
+esp_err_t control_dispatch_queue_audio_set_dynamic_asset_path(uint32_t slot_id, const char *path);
 esp_err_t control_dispatch_queue_audio_bg_start(uint32_t fade_in_ms, uint16_t gain_permille);
 esp_err_t control_dispatch_queue_audio_bg_set_gain(uint32_t fade_ms, uint16_t gain_permille);
 esp_err_t control_dispatch_queue_audio_bg_fade_out(uint32_t fade_out_ms);
@@ -39,4 +40,3 @@ esp_err_t control_dispatch_queue_mic_loopback_stop(void);
 #endif
 
 #endif
-

@@ -2,8 +2,6 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "app_events.h"
-#include "app_tasking.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -14,6 +12,8 @@
 static const char *TAG = LOG_TAG_SUBMODE_BUTTON;
 static TaskHandle_t s_submode_button_task;
 static const uint32_t SUBMODE_BUTTON_MIN_STACK = 3072U;
+static bsp_submode_button_pressed_cb_t s_pressed_callback;
+static void *s_pressed_callback_ctx;
 
 static uint32_t calc_debounce_samples(uint32_t poll_ms, uint32_t debounce_ms)
 {
@@ -24,20 +24,11 @@ static uint32_t calc_debounce_samples(uint32_t poll_ms, uint32_t debounce_ms)
     return samples > 0U ? samples : 1U;
 }
 
-static void post_submode_request(void)
+esp_err_t bsp_submode_button_set_pressed_callback(bsp_submode_button_pressed_cb_t callback, void *user_ctx)
 {
-    app_event_t event = { 0 };
-    event.id = APP_EVENT_SUBMODE_BUTTON_REQUEST;
-    event.source = APP_EVENT_SOURCE_CONTROL;
-    event.timestamp_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-
-    esp_err_t err = app_tasking_post_event(&event, CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "submode button request post failed: %s", esp_err_to_name(err));
-        return;
-    }
-
-    ESP_LOGI(TAG, "submode button pressed");
+    s_pressed_callback = callback;
+    s_pressed_callback_ctx = user_ctx;
+    return ESP_OK;
 }
 
 static void submode_button_task(void *arg)
@@ -78,7 +69,11 @@ static void submode_button_task(void *arg)
         if (candidate_pressed != stable_pressed && stable_counter >= debounce_samples) {
             stable_pressed = candidate_pressed;
             if (stable_pressed) {
-                post_submode_request();
+                if (s_pressed_callback != NULL) {
+                    s_pressed_callback(s_pressed_callback_ctx);
+                } else {
+                    ESP_LOGW(TAG, "submode button pressed, callback is not set");
+                }
             } else {
                 ESP_LOGI(TAG, "submode button released");
             }

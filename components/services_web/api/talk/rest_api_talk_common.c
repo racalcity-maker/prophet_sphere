@@ -173,13 +173,6 @@ esp_err_t talk_check_busy(bool *busy_out)
         return ESP_OK;
     }
 
-    mic_capture_status_t mic = { 0 };
-    esp_err_t mic_err = mic_service_get_status(&mic);
-    if (mic_err == ESP_OK && mic.active) {
-        *busy_out = true;
-        return ESP_OK;
-    }
-
     bool live_open = false;
     bool live_stream = false;
     esp_err_t live_err = talk_live_snapshot(&live_open, &live_stream);

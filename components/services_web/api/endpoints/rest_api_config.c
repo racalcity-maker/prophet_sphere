@@ -2,12 +2,11 @@
 
 #include <inttypes.h>
 #include <stdio.h>
-#include "audio_service.h"
+#include "app_tasking.h"
 #include "config_manager.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "led_service.h"
 #include "log_tags.h"
 #include "rest_api_common.h"
 #include "sdkconfig.h"
@@ -112,7 +111,10 @@ static esp_err_t config_post_handler(httpd_req_t *req)
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_brightness");
         }
         (void)config_manager_set_led_brightness((uint8_t)brightness);
-        (void)led_service_set_brightness((led_brightness_t)brightness, request_timeout_ms());
+        led_command_t led_cmd = { 0 };
+        led_cmd.id = LED_CMD_SET_BRIGHTNESS;
+        led_cmd.payload.set_brightness.brightness = (uint8_t)brightness;
+        (void)app_tasking_send_led_command(&led_cmd, request_timeout_ms());
         cfg.led_brightness = (uint8_t)brightness;
         has_any = true;
         brightness_changed = true;
@@ -124,7 +126,10 @@ static esp_err_t config_post_handler(httpd_req_t *req)
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_volume");
         }
         (void)config_manager_set_audio_volume((uint8_t)volume);
-        (void)audio_service_set_volume((uint8_t)volume, request_timeout_ms());
+        audio_command_t audio_cmd = { 0 };
+        audio_cmd.id = AUDIO_CMD_SET_VOLUME;
+        audio_cmd.payload.set_volume.volume = (uint8_t)volume;
+        (void)app_tasking_send_audio_command(&audio_cmd, request_timeout_ms());
         cfg.audio_volume = (uint8_t)volume;
         has_any = true;
         volume_changed = true;
@@ -338,10 +343,12 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         cfg.hybrid_effect_speed = (uint8_t)hybrid_effect_speed_u32;
         cfg.hybrid_effect_intensity = (uint8_t)hybrid_effect_intensity_u32;
         cfg.hybrid_effect_scale = (uint8_t)hybrid_effect_scale_u32;
-        (void)led_service_set_effect_params(cfg.hybrid_effect_speed,
-                                            cfg.hybrid_effect_intensity,
-                                            cfg.hybrid_effect_scale,
-                                            request_timeout_ms());
+        led_command_t led_cmd = { 0 };
+        led_cmd.id = LED_CMD_SET_EFFECT_PARAMS;
+        led_cmd.payload.set_effect_params.speed = cfg.hybrid_effect_speed;
+        led_cmd.payload.set_effect_params.intensity = cfg.hybrid_effect_intensity;
+        led_cmd.payload.set_effect_params.scale = cfg.hybrid_effect_scale;
+        (void)app_tasking_send_led_command(&led_cmd, request_timeout_ms());
         has_any = true;
     }
     if (hybrid_effect_palette_changed) {
@@ -367,17 +374,19 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         cfg.hybrid_effect_color3_r = (uint8_t)hybrid_effect_color3_r_u32;
         cfg.hybrid_effect_color3_g = (uint8_t)hybrid_effect_color3_g_u32;
         cfg.hybrid_effect_color3_b = (uint8_t)hybrid_effect_color3_b_u32;
-        (void)led_service_set_effect_palette(cfg.hybrid_effect_palette_mode,
-                                             cfg.hybrid_effect_color1_r,
-                                             cfg.hybrid_effect_color1_g,
-                                             cfg.hybrid_effect_color1_b,
-                                             cfg.hybrid_effect_color2_r,
-                                             cfg.hybrid_effect_color2_g,
-                                             cfg.hybrid_effect_color2_b,
-                                             cfg.hybrid_effect_color3_r,
-                                             cfg.hybrid_effect_color3_g,
-                                             cfg.hybrid_effect_color3_b,
-                                             request_timeout_ms());
+        led_command_t led_cmd = { 0 };
+        led_cmd.id = LED_CMD_SET_EFFECT_PALETTE;
+        led_cmd.payload.set_effect_palette.mode = cfg.hybrid_effect_palette_mode;
+        led_cmd.payload.set_effect_palette.c1_r = cfg.hybrid_effect_color1_r;
+        led_cmd.payload.set_effect_palette.c1_g = cfg.hybrid_effect_color1_g;
+        led_cmd.payload.set_effect_palette.c1_b = cfg.hybrid_effect_color1_b;
+        led_cmd.payload.set_effect_palette.c2_r = cfg.hybrid_effect_color2_r;
+        led_cmd.payload.set_effect_palette.c2_g = cfg.hybrid_effect_color2_g;
+        led_cmd.payload.set_effect_palette.c2_b = cfg.hybrid_effect_color2_b;
+        led_cmd.payload.set_effect_palette.c3_r = cfg.hybrid_effect_color3_r;
+        led_cmd.payload.set_effect_palette.c3_g = cfg.hybrid_effect_color3_g;
+        led_cmd.payload.set_effect_palette.c3_b = cfg.hybrid_effect_color3_b;
+        (void)app_tasking_send_led_command(&led_cmd, request_timeout_ms());
         has_any = true;
     }
 

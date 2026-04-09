@@ -4,7 +4,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
-#include "audio_service.h"
+#include "app_tasking.h"
 #include "config_manager.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
@@ -317,7 +317,10 @@ static esp_err_t offline_config_post_handler(httpd_req_t *req)
             return rest_api_send_error_json(req, "400 Bad Request", "invalid_fg_volume");
         }
         (void)config_manager_set_audio_volume((uint8_t)volume);
-        (void)audio_service_set_volume((uint8_t)volume, request_timeout_ms());
+        audio_command_t audio_cmd = { 0 };
+        audio_cmd.id = AUDIO_CMD_SET_VOLUME;
+        audio_cmd.payload.set_volume.volume = (uint8_t)volume;
+        (void)app_tasking_send_audio_command(&audio_cmd, request_timeout_ms());
         has_any = true;
     }
 
@@ -659,7 +662,9 @@ static esp_err_t offline_action_handler(httpd_req_t *req)
     }
 
     if (strcmp(value, "audio_stop") == 0) {
-        if (audio_service_stop(request_timeout_ms()) != ESP_OK) {
+        audio_command_t audio_cmd = { 0 };
+        audio_cmd.id = AUDIO_CMD_STOP;
+        if (app_tasking_send_audio_command(&audio_cmd, request_timeout_ms()) != ESP_OK) {
             return rest_api_send_error_json(req, "500 Internal Server Error", "audio_stop_failed");
         }
         return rest_api_send_json(req, "200 OK", "{\"ok\":true,\"action\":\"audio_stop\"}");

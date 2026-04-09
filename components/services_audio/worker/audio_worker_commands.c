@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <string.h>
 #include "sdkconfig.h"
+#include "audio_asset_registry.h"
 #include "audio_output_i2s.h"
 #include "audio_worker_bg.h"
 #include "audio_worker_mixer.h"
@@ -79,6 +80,23 @@ void audio_worker_commands_handle(audio_worker_commands_ctx_t *ctx, const audio_
         ctx->shared->volume = cmd->payload.set_volume.volume;
         ESP_LOGI(TAG, "SET_VOLUME %u", (unsigned)ctx->shared->volume);
         break;
+
+    case AUDIO_CMD_SET_DYNAMIC_ASSET_PATH: {
+        const uint32_t slot_id = cmd->payload.set_dynamic_asset_path.slot_id;
+        const char *path = cmd->payload.set_dynamic_asset_path.path;
+        if (path == NULL || path[0] == '\0') {
+            ESP_LOGW(TAG, "SET_DYNAMIC_ASSET_PATH invalid empty path");
+            break;
+        }
+        esp_err_t dyn_err = audio_asset_registry_set_dynamic_path((audio_asset_id_t)slot_id, path);
+        if (dyn_err != ESP_OK) {
+            ESP_LOGW(TAG,
+                     "SET_DYNAMIC_ASSET_PATH failed slot=%" PRIu32 ": %s",
+                     slot_id,
+                     esp_err_to_name(dyn_err));
+        }
+        break;
+    }
 
     case AUDIO_CMD_BG_START: {
         ctx->shared->pcm_stream_active = false;
@@ -191,20 +209,27 @@ void audio_worker_commands_handle(audio_worker_commands_ctx_t *ctx, const audio_
         break;
     }
 
-    case AUDIO_CMD_PCM_STREAM_CHUNK:
-        if (!ctx->shared->pcm_stream_active) {
+    case AUDIO_CMD_PCM_STREAM_CHUNK: {
+        audio_pcm_chunk_t *chunk = cmd->payload.pcm_stream_chunk.chunk;
+        if (chunk == NULL) {
             break;
         }
-        if (cmd->payload.pcm_stream_chunk.sample_count == 0U ||
-            cmd->payload.pcm_stream_chunk.sample_count > AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES) {
+        if (!ctx->shared->pcm_stream_active) {
+            app_tasking_release_audio_pcm_chunk(chunk);
+            break;
+        }
+        if (chunk->sample_count == 0U ||
+            chunk->sample_count > AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES) {
+            app_tasking_release_audio_pcm_chunk(chunk);
             break;
         }
         if (ctx->ensure_output_started() != ESP_OK) {
+            app_tasking_release_audio_pcm_chunk(chunk);
             break;
         }
         {
             (*ctx->pcm_stream_rx_chunks)++;
-            *ctx->pcm_stream_rx_samples += (uint32_t)cmd->payload.pcm_stream_chunk.sample_count;
+            *ctx->pcm_stream_rx_samples += (uint32_t)chunk->sample_count;
             TickType_t now = xTaskGetTickCount();
             TickType_t diag_gap = audio_worker_ms_to_ticks_min1(1000U);
             if ((now - *ctx->pcm_stream_diag_last_log_tick) >= diag_gap) {
@@ -220,8 +245,8 @@ void audio_worker_commands_handle(audio_worker_commands_ctx_t *ctx, const audio_
                          ctx->shared->bg.active ? 1U : 0U);
             }
             esp_err_t wr_err = audio_worker_write_mixed_output(ctx->shared,
-                                                               cmd->payload.pcm_stream_chunk.samples,
-                                                               (size_t)cmd->payload.pcm_stream_chunk.sample_count,
+                                                               chunk->samples,
+                                                               (size_t)chunk->sample_count,
                                                                true);
             if (wr_err == ESP_ERR_TIMEOUT) {
                 TickType_t gap = audio_worker_ms_to_ticks_min1(1000U);
@@ -234,8 +259,10 @@ void audio_worker_commands_handle(audio_worker_commands_ctx_t *ctx, const audio_
             } else {
                 *ctx->pcm_stream_chunk_written_since_poll = true;
             }
+            app_tasking_release_audio_pcm_chunk(chunk);
         }
         break;
+    }
 
     case AUDIO_CMD_NONE:
     default:

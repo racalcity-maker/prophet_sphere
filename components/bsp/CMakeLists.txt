@@ -11,7 +11,6 @@ idf_component_register(
         "input"
     REQUIRES
         common
-        app_core
         freertos
         esp_driver_gpio
 )

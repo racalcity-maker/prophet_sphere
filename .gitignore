@@ -21,6 +21,7 @@ Thumbs.db
 
 # Python cache/venv
 **/__pycache__/
+**/*.pyc
 *.pyc
 *.pyo
 .venv/
@@ -38,7 +39,17 @@ venv/
 *.swo
 kws/captures/
 
+# Generated local TLS keys/certs (never commit private keys)
+components/services_web/certs/prvtkey.pem
+components/services_web/certs/ca_key.pem
+components/services_web/certs/servercert.pem
+components/services_web/certs/ca_cert.pem
+components/services_web/certs/*key*.pem
+components/services_web/certs/*.bak
+
 # Audio/text backup artifacts: keep only working text banks
 /docs/texts_backup_*/
 /docs/texts_broken_*/
 /docs/texts/*.bak.txt
+/docs/text_improoved/
+/docs/texts.zip

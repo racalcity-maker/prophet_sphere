@@ -1,6 +1,7 @@
 #include "app_tasking.h"
 
 #include <stdbool.h>
+#include <string.h>
 #include "sdkconfig.h"
 #include "app_control_task.h"
 #include "app_fsm.h"
@@ -26,6 +27,30 @@ static uint32_t s_timer_pending_mask;
 #ifndef CONFIG_ORB_MIC_COMMAND_QUEUE_LENGTH
 #define CONFIG_ORB_MIC_COMMAND_QUEUE_LENGTH 8
 #endif
+#ifndef CONFIG_ORB_AUDIO_PCM_CHUNK_POOL_LENGTH
+#define CONFIG_ORB_AUDIO_PCM_CHUNK_POOL_LENGTH 8
+#endif
+
+static QueueHandle_t s_audio_pcm_free_queue;
+static audio_pcm_chunk_t **s_audio_pcm_chunks;
+
+static void cleanup_audio_pcm_chunk_pool(void)
+{
+    if (s_audio_pcm_free_queue != NULL) {
+        vQueueDelete(s_audio_pcm_free_queue);
+        s_audio_pcm_free_queue = NULL;
+    }
+    if (s_audio_pcm_chunks != NULL) {
+        const size_t chunk_pool_len = (size_t)CONFIG_ORB_AUDIO_PCM_CHUNK_POOL_LENGTH;
+        for (size_t i = 0; i < chunk_pool_len; ++i) {
+            if (s_audio_pcm_chunks[i] != NULL) {
+                heap_caps_free(s_audio_pcm_chunks[i]);
+            }
+        }
+        heap_caps_free(s_audio_pcm_chunks);
+        s_audio_pcm_chunks = NULL;
+    }
+}
 
 static uint32_t timer_kind_to_mask(app_timer_kind_t kind)
 {
@@ -64,6 +89,9 @@ static void cleanup_queues(void)
         heap_caps_free(s_audio_cmd_queue_storage);
         s_audio_cmd_queue_storage = NULL;
     }
+    if (s_audio_pcm_free_queue != NULL || s_audio_pcm_chunks != NULL) {
+        cleanup_audio_pcm_chunk_pool();
+    }
     if (s_ai_cmd_queue != NULL) {
         vQueueDelete(s_ai_cmd_queue);
         s_ai_cmd_queue = NULL;
@@ -75,6 +103,60 @@ static void cleanup_queues(void)
     portENTER_CRITICAL(&s_timer_pending_lock);
     s_timer_pending_mask = 0U;
     portEXIT_CRITICAL(&s_timer_pending_lock);
+}
+
+static audio_pcm_chunk_t *alloc_audio_pcm_chunk(void)
+{
+    audio_pcm_chunk_t *chunk = (audio_pcm_chunk_t *)heap_caps_malloc(sizeof(audio_pcm_chunk_t),
+                                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (chunk == NULL) {
+        chunk = (audio_pcm_chunk_t *)heap_caps_malloc(sizeof(audio_pcm_chunk_t), MALLOC_CAP_8BIT);
+    }
+    if (chunk != NULL) {
+        (void)memset(chunk, 0, sizeof(*chunk));
+    }
+    return chunk;
+}
+
+static esp_err_t create_audio_pcm_chunk_pool(void)
+{
+    if (s_audio_pcm_free_queue != NULL && s_audio_pcm_chunks != NULL) {
+        return ESP_OK;
+    }
+
+    const size_t chunk_pool_len = (size_t)CONFIG_ORB_AUDIO_PCM_CHUNK_POOL_LENGTH;
+    s_audio_pcm_free_queue = xQueueCreate((UBaseType_t)chunk_pool_len, sizeof(audio_pcm_chunk_t *));
+    if (s_audio_pcm_free_queue == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_audio_pcm_chunks =
+        (audio_pcm_chunk_t **)heap_caps_calloc(chunk_pool_len, sizeof(audio_pcm_chunk_t *), MALLOC_CAP_8BIT);
+    if (s_audio_pcm_chunks == NULL) {
+        vQueueDelete(s_audio_pcm_free_queue);
+        s_audio_pcm_free_queue = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+
+    for (size_t i = 0; i < chunk_pool_len; ++i) {
+        audio_pcm_chunk_t *chunk = alloc_audio_pcm_chunk();
+        if (chunk == NULL) {
+            cleanup_audio_pcm_chunk_pool();
+            return ESP_ERR_NO_MEM;
+        }
+        s_audio_pcm_chunks[i] = chunk;
+        if (xQueueSend(s_audio_pcm_free_queue, &chunk, 0) != pdTRUE) {
+            cleanup_audio_pcm_chunk_pool();
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+
+    const size_t bytes_total = chunk_pool_len * sizeof(audio_pcm_chunk_t);
+    ESP_LOGI(TAG,
+             "audio pcm pool chunks=%u bytes=%u",
+             (unsigned)chunk_pool_len,
+             (unsigned)bytes_total);
+    return ESP_OK;
 }
 
 static QueueHandle_t create_audio_queue(void)
@@ -125,13 +207,14 @@ static esp_err_t send_to_queue(QueueHandle_t queue, const void *item, uint32_t t
 esp_err_t app_tasking_init(void)
 {
     bool all_ready = (s_app_event_queue != NULL && s_led_cmd_queue != NULL && s_audio_cmd_queue != NULL &&
-                      s_ai_cmd_queue != NULL && s_mic_cmd_queue != NULL);
+                      s_ai_cmd_queue != NULL && s_mic_cmd_queue != NULL && s_audio_pcm_free_queue != NULL &&
+                      s_audio_pcm_chunks != NULL);
     if (all_ready) {
         return ESP_OK;
     }
 
     if (s_app_event_queue != NULL || s_led_cmd_queue != NULL || s_audio_cmd_queue != NULL || s_ai_cmd_queue != NULL ||
-        s_mic_cmd_queue != NULL) {
+        s_mic_cmd_queue != NULL || s_audio_pcm_free_queue != NULL || s_audio_pcm_chunks != NULL) {
         ESP_LOGW(TAG, "partial queue state detected, cleaning up and retrying init");
         cleanup_queues();
     }
@@ -141,8 +224,9 @@ esp_err_t app_tasking_init(void)
     QueueHandle_t audio_q = create_audio_queue();
     QueueHandle_t ai_q = xQueueCreate(CONFIG_ORB_AI_COMMAND_QUEUE_LENGTH, sizeof(ai_command_t));
     QueueHandle_t mic_q = xQueueCreate(CONFIG_ORB_MIC_COMMAND_QUEUE_LENGTH, sizeof(mic_command_t));
+    esp_err_t pool_err = create_audio_pcm_chunk_pool();
 
-    if (app_q == NULL || led_q == NULL || audio_q == NULL || ai_q == NULL || mic_q == NULL) {
+    if (app_q == NULL || led_q == NULL || audio_q == NULL || ai_q == NULL || mic_q == NULL || pool_err != ESP_OK) {
         if (app_q != NULL) {
             vQueueDelete(app_q);
         }
@@ -162,6 +246,7 @@ esp_err_t app_tasking_init(void)
         if (mic_q != NULL) {
             vQueueDelete(mic_q);
         }
+        cleanup_queues();
         ESP_LOGE(TAG, "queue allocation failed");
         return ESP_ERR_NO_MEM;
     }
@@ -274,7 +359,52 @@ esp_err_t app_tasking_send_audio_command(const audio_command_t *command, uint32_
     if (timeout_ms == 0) {
         timeout_ms = CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
     }
+    if (command != NULL &&
+        command->id == AUDIO_CMD_PCM_STREAM_CHUNK &&
+        command->payload.pcm_stream_chunk.chunk == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
     return send_to_queue(s_audio_cmd_queue, command, timeout_ms);
+}
+
+esp_err_t app_tasking_send_audio_pcm_chunk_copy(const int16_t *samples, uint16_t sample_count, uint32_t timeout_ms)
+{
+    if (samples == NULL || sample_count == 0U || sample_count > AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_audio_pcm_free_queue == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (timeout_ms == 0U) {
+        timeout_ms = CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS;
+    }
+    TickType_t timeout_ticks = pdMS_TO_TICKS(timeout_ms);
+    audio_pcm_chunk_t *chunk = NULL;
+    if (xQueueReceive(s_audio_pcm_free_queue, &chunk, timeout_ticks) != pdTRUE || chunk == NULL) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    chunk->sample_count = sample_count;
+    (void)memcpy(chunk->samples, samples, (size_t)sample_count * sizeof(int16_t));
+
+    audio_command_t cmd = { 0 };
+    cmd.id = AUDIO_CMD_PCM_STREAM_CHUNK;
+    cmd.payload.pcm_stream_chunk.chunk = chunk;
+    esp_err_t err = app_tasking_send_audio_command(&cmd, timeout_ms);
+    if (err != ESP_OK) {
+        app_tasking_release_audio_pcm_chunk(chunk);
+    }
+    return err;
+}
+
+void app_tasking_release_audio_pcm_chunk(audio_pcm_chunk_t *chunk)
+{
+    if (chunk == NULL || s_audio_pcm_free_queue == NULL) {
+        return;
+    }
+    if (xQueueSend(s_audio_pcm_free_queue, &chunk, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "audio pcm chunk pool overflow on release");
+    }
 }
 
 esp_err_t app_tasking_send_ai_command(const ai_command_t *command, uint32_t timeout_ms)

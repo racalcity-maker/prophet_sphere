@@ -22,6 +22,34 @@ static esp_err_t talk_say_send_pcm_stop(uint32_t timeout_ms)
     return app_tasking_send_audio_command(&cmd, timeout_ms);
 }
 
+static esp_err_t talk_say_enqueue_tts_play(const char *text,
+                                           uint32_t stream_timeout_ms,
+                                           uint32_t bg_fade_out_ms,
+                                           uint32_t queue_timeout_ms)
+{
+#if !CONFIG_ORB_ENABLE_MIC
+    (void)text;
+    (void)stream_timeout_ms;
+    (void)bg_fade_out_ms;
+    (void)queue_timeout_ms;
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    if (text == NULL || text[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (strlen(text) >= MIC_TTS_TEXT_MAX_LEN) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    mic_command_t cmd = { 0 };
+    cmd.id = MIC_CMD_TTS_PLAY_TEXT;
+    (void)snprintf(cmd.payload.tts_play.text, sizeof(cmd.payload.tts_play.text), "%s", text);
+    cmd.payload.tts_play.timeout_ms = stream_timeout_ms;
+    cmd.payload.tts_play.bg_fade_out_ms = bg_fade_out_ms;
+    return app_tasking_send_mic_command(&cmd, queue_timeout_ms);
+#endif
+}
+
 esp_err_t talk_say_handler(httpd_req_t *req)
 {
     esp_err_t ret = ESP_OK;
@@ -105,10 +133,10 @@ esp_err_t talk_say_handler(httpd_req_t *req)
         }
     }
 
-    if (!mic_service_is_enabled()) {
+#if !CONFIG_ORB_ENABLE_MIC
         ret = rest_api_send_error_json(req, "503 Service Unavailable", "mic_service_disabled");
         goto cleanup;
-    }
+#endif
 
     bool busy = false;
     esp_err_t busy_err = talk_check_busy(&busy);
@@ -145,7 +173,7 @@ esp_err_t talk_say_handler(httpd_req_t *req)
         goto cleanup;
     }
 
-    esp_err_t err = mic_service_play_tts_text(text, stream_timeout_ms, bg_fade_out_ms, queue_timeout_ms);
+    esp_err_t err = talk_say_enqueue_tts_play(text, stream_timeout_ms, bg_fade_out_ms, queue_timeout_ms);
     if (err != ESP_OK) {
         esp_err_t rollback_err = talk_say_send_pcm_stop(queue_timeout_ms);
         if (rollback_err != ESP_OK) {

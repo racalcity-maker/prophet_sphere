@@ -92,6 +92,7 @@ typedef enum {
     AUDIO_CMD_PLAY_ASSET,
     AUDIO_CMD_STOP,
     AUDIO_CMD_SET_VOLUME,
+    AUDIO_CMD_SET_DYNAMIC_ASSET_PATH,
     AUDIO_CMD_BG_START,
     AUDIO_CMD_BG_SET_GAIN,
     AUDIO_CMD_BG_FADE_OUT,
@@ -102,6 +103,12 @@ typedef enum {
 } audio_command_id_t;
 
 #define AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES 1024U
+#define AUDIO_DYNAMIC_ASSET_PATH_MAX_LEN 128U
+
+typedef struct {
+    uint16_t sample_count;
+    int16_t samples[AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES];
+} audio_pcm_chunk_t;
 
 typedef struct {
     audio_command_id_t id;
@@ -112,6 +119,10 @@ typedef struct {
         struct {
             uint8_t volume;
         } set_volume;
+        struct {
+            uint32_t slot_id;
+            char path[AUDIO_DYNAMIC_ASSET_PATH_MAX_LEN];
+        } set_dynamic_asset_path;
         struct {
             uint32_t fade_in_ms;
             uint16_t gain_permille;
@@ -126,8 +137,7 @@ typedef struct {
             uint32_t fade_out_ms;
         } bg_fade_out;
         struct {
-            uint16_t sample_count;
-            int16_t samples[AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES];
+            audio_pcm_chunk_t *chunk;
         } pcm_stream_chunk;
     } payload;
 } audio_command_t;
@@ -187,6 +197,8 @@ esp_err_t app_tasking_post_timer_event_reliable(app_timer_kind_t timer_kind, uin
 bool app_tasking_take_pending_timer_event(app_event_t *event);
 esp_err_t app_tasking_send_led_command(const led_command_t *command, uint32_t timeout_ms);
 esp_err_t app_tasking_send_audio_command(const audio_command_t *command, uint32_t timeout_ms);
+esp_err_t app_tasking_send_audio_pcm_chunk_copy(const int16_t *samples, uint16_t sample_count, uint32_t timeout_ms);
+void app_tasking_release_audio_pcm_chunk(audio_pcm_chunk_t *chunk);
 esp_err_t app_tasking_send_ai_command(const ai_command_t *command, uint32_t timeout_ms);
 esp_err_t app_tasking_send_mic_command(const mic_command_t *command, uint32_t timeout_ms);
 

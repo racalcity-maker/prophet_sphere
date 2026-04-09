@@ -1,3 +1,31 @@
+set(ORB_WEB_CERT_DIR "${CMAKE_CURRENT_LIST_DIR}/certs")
+set(ORB_WEB_CERT_FILE "${ORB_WEB_CERT_DIR}/servercert.pem")
+set(ORB_WEB_KEY_FILE "${ORB_WEB_CERT_DIR}/prvtkey.pem")
+set(ORB_WEB_CERT_GEN_SCRIPT "${CMAKE_SOURCE_DIR}/kws/scripts/gen_web_tls_cert.py")
+
+if(NOT EXISTS "${ORB_WEB_CERT_FILE}" OR NOT EXISTS "${ORB_WEB_KEY_FILE}")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND AND EXISTS "${ORB_WEB_CERT_GEN_SCRIPT}")
+        execute_process(
+            COMMAND "${Python3_EXECUTABLE}" "${ORB_WEB_CERT_GEN_SCRIPT}" --cert-dir "${ORB_WEB_CERT_DIR}"
+            RESULT_VARIABLE ORB_WEB_CERT_GEN_RESULT
+            OUTPUT_VARIABLE ORB_WEB_CERT_GEN_STDOUT
+            ERROR_VARIABLE ORB_WEB_CERT_GEN_STDERR
+        )
+        if(NOT ORB_WEB_CERT_GEN_RESULT EQUAL 0)
+            message(WARNING "TLS cert/key auto-generation failed (${ORB_WEB_CERT_GEN_RESULT})")
+            message(WARNING "${ORB_WEB_CERT_GEN_STDOUT}")
+            message(WARNING "${ORB_WEB_CERT_GEN_STDERR}")
+        endif()
+    endif()
+endif()
+
+if(NOT EXISTS "${ORB_WEB_CERT_FILE}" OR NOT EXISTS "${ORB_WEB_KEY_FILE}")
+    message(FATAL_ERROR
+        "Missing HTTPS cert/key for services_web: ${ORB_WEB_CERT_FILE}, ${ORB_WEB_KEY_FILE}. "
+        "Generate them with: python kws/scripts/gen_web_tls_cert.py --cert-dir components/services_web/certs")
+endif()
+
 idf_component_register(
     SRCS
         "web/web_server.c"
@@ -33,17 +61,14 @@ idf_component_register(
         common
         freertos
         services_config
-        services_audio
-        services_led
-        services_mic
         services_network
         esp_http_server
         esp_https_server
         esp_http_client
         esp_timer
     EMBED_TXTFILES
-        "certs/servercert.pem"
-        "certs/prvtkey.pem"
+        "${ORB_WEB_CERT_FILE}"
+        "${ORB_WEB_KEY_FILE}"
         "portal/pages/offline.html"
         "portal/pages/hybrid.html"
         "portal/pages/installation.html"

@@ -7,27 +7,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "log_tags.h"
-#include "mode_manager.h"
 #include "sdkconfig.h"
 
 static const char *TAG = LOG_TAG_MODE_BUTTON;
 static TaskHandle_t s_mode_button_task;
 static const uint32_t MODE_BUTTON_MIN_STACK = 3072U;
-
-static orb_mode_t next_mode(orb_mode_t current)
-{
-    switch (current) {
-    case ORB_MODE_OFFLINE_SCRIPTED:
-        return ORB_MODE_HYBRID_AI;
-    case ORB_MODE_HYBRID_AI:
-        return ORB_MODE_INSTALLATION_SLAVE;
-    case ORB_MODE_INSTALLATION_SLAVE:
-        return ORB_MODE_OFFLINE_SCRIPTED;
-    case ORB_MODE_NONE:
-    default:
-        return ORB_MODE_OFFLINE_SCRIPTED;
-    }
-}
+static bsp_mode_button_pressed_cb_t s_pressed_callback;
+static void *s_pressed_callback_ctx;
 
 static uint32_t calc_debounce_samples(uint32_t poll_ms, uint32_t debounce_ms)
 {
@@ -38,17 +24,11 @@ static uint32_t calc_debounce_samples(uint32_t poll_ms, uint32_t debounce_ms)
     return samples > 0U ? samples : 1U;
 }
 
-static void request_next_mode(void)
+esp_err_t bsp_mode_button_set_pressed_callback(bsp_mode_button_pressed_cb_t callback, void *user_ctx)
 {
-    orb_mode_t current = mode_manager_get_current_mode();
-    orb_mode_t target = next_mode(current);
-    esp_err_t err = mode_manager_request_switch(target);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "mode button request failed: %d -> %d (%s)", (int)current, (int)target, esp_err_to_name(err));
-        return;
-    }
-
-    ESP_LOGI(TAG, "mode button: %d -> %d", (int)current, (int)target);
+    s_pressed_callback = callback;
+    s_pressed_callback_ctx = user_ctx;
+    return ESP_OK;
 }
 
 static void mode_button_task(void *arg)
@@ -90,7 +70,11 @@ static void mode_button_task(void *arg)
             stable_pressed = candidate_pressed;
             if (stable_pressed) {
                 ESP_LOGI(TAG, "mode button pressed");
-                request_next_mode();
+                if (s_pressed_callback != NULL) {
+                    s_pressed_callback(s_pressed_callback_ctx);
+                } else {
+                    ESP_LOGW(TAG, "mode button pressed, callback is not set");
+                }
             } else {
                 ESP_LOGI(TAG, "mode button released");
             }

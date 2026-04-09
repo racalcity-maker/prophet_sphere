@@ -3,8 +3,6 @@
 
 #include <inttypes.h>
 #include <string.h>
-#include "audio_service.h"
-#include "audio_types.h"
 #include "config_manager.h"
 #include "control_dispatch.h"
 #include "esp_check.h"
@@ -15,6 +13,7 @@
 #include "orb_led_scenes.h"
 
 static const char *TAG = LOG_TAG_MODE_MANAGER;
+static const uint32_t MODE_EXEC_AUDIO_DYNAMIC_SLOT1_ID = 1001U;
 
 typedef struct {
     const char *name;
@@ -332,10 +331,11 @@ esp_err_t mode_action_executor_handle_action(mode_action_executor_t *executor,
             if (action->mic.tts_text[0] == '\0') {
                 return ESP_ERR_INVALID_ARG;
             }
-            ESP_RETURN_ON_ERROR(audio_service_set_dynamic_asset_path(AUDIO_ASSET_DYNAMIC_SLOT1, action->mic.tts_text),
+            ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_set_dynamic_asset_path(MODE_EXEC_AUDIO_DYNAMIC_SLOT1_ID,
+                                                                                     action->mic.tts_text),
                                 TAG,
                                 "lottery sorting dynamic track set failed");
-            ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_asset((uint32_t)AUDIO_ASSET_DYNAMIC_SLOT1),
+            ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_asset(MODE_EXEC_AUDIO_DYNAMIC_SLOT1_ID),
                                 TAG,
                                 "lottery sorting dynamic track play failed");
             return ESP_OK;
@@ -376,10 +376,11 @@ esp_err_t mode_action_executor_handle_action(mode_action_executor_t *executor,
             if (action->mic.tts_text[0] == '\0') {
                 return ESP_ERR_INVALID_ARG;
             }
-            ESP_RETURN_ON_ERROR(audio_service_set_dynamic_asset_path(AUDIO_ASSET_DYNAMIC_SLOT1, action->mic.tts_text),
+            ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_set_dynamic_asset_path(MODE_EXEC_AUDIO_DYNAMIC_SLOT1_ID,
+                                                                                     action->mic.tts_text),
                                 TAG,
                                 "lottery dynamic track set failed");
-            ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_asset((uint32_t)AUDIO_ASSET_DYNAMIC_SLOT1),
+            ESP_RETURN_ON_ERROR(control_dispatch_queue_audio_asset(MODE_EXEC_AUDIO_DYNAMIC_SLOT1_ID),
                                 TAG,
                                 "lottery dynamic track play failed");
             return ESP_OK;

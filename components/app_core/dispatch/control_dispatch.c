@@ -77,6 +77,30 @@ esp_err_t control_dispatch_queue_audio_set_volume(uint8_t volume)
     return ESP_OK;
 }
 
+esp_err_t control_dispatch_queue_audio_set_dynamic_asset_path(uint32_t slot_id, const char *path)
+{
+    if (path == NULL || path[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    audio_command_t audio_cmd = { 0 };
+    audio_cmd.id = AUDIO_CMD_SET_DYNAMIC_ASSET_PATH;
+    audio_cmd.payload.set_dynamic_asset_path.slot_id = slot_id;
+    int n = snprintf(audio_cmd.payload.set_dynamic_asset_path.path,
+                     sizeof(audio_cmd.payload.set_dynamic_asset_path.path),
+                     "%s",
+                     path);
+    if (n <= 0 || (size_t)n >= sizeof(audio_cmd.payload.set_dynamic_asset_path.path)) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    ESP_RETURN_ON_ERROR(app_tasking_send_audio_command(&audio_cmd, CONFIG_ORB_QUEUE_SEND_TIMEOUT_MS),
+                        TAG,
+                        "failed to queue dynamic asset path");
+    ESP_LOGI(TAG, "queued audio dynamic path slot=%" PRIu32, slot_id);
+    return ESP_OK;
+}
+
 esp_err_t control_dispatch_queue_audio_bg_start(uint32_t fade_in_ms, uint16_t gain_permille)
 {
     audio_command_t audio_cmd = { 0 };

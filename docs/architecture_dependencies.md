@@ -29,7 +29,7 @@
 | Компонент | Назначение | REQUIRES | PRIV_REQUIRES |
 |---|---|---|---|
 | `common` | Общие типы, intent/mem monitor | `esp_timer` | - |
-| `app_core` | FSM, mode manager, dispatch, runtime guard | `freertos`, `common`, `modes`, `services_config` | `services_audio` |
+| `app_core` | FSM, mode manager, dispatch, runtime guard | `freertos`, `common`, `modes`, `services_config` | - |
 | `bsp` | Пины/кнопки платы | `common`, `app_core`, `freertos`, `esp_driver_gpio` | - |
 | `modes` | Логика режимов и submode | `common`, `services_config` | - |
 | `service_runtime` | Lifecycle orchestration сервисов | `freertos`, `common`, `app_core`, `services_touch`, `services_led`, `services_audio`, `services_mic`, `services_ai`, `services_storage`, `services_network`, `services_mqtt`, `services_web`, `services_ota` | - |
@@ -41,7 +41,7 @@
 | `services_storage` | SD mount/content index | `common`, `freertos`, `fatfs`, `sdmmc`, `esp_driver_spi`, `esp_system` | - |
 | `services_network` | Wi-Fi profiles/events/policy | `app_core`, `common`, `freertos`, `services_config`, `esp_event`, `esp_netif`, `esp_wifi`, `nvs_flash` | - |
 | `services_mqtt` | MQTT lifecycle | `app_core`, `common`, `freertos` | - |
-| `services_web` | HTTP/HTTPS server, REST, talk WS, portal | `app_core`, `common`, `freertos`, `services_config`, `services_audio`, `services_led`, `services_mic`, `services_network`, `esp_http_server`, `esp_https_server`, `esp_http_client`, `esp_timer` | - |
+| `services_web` | HTTP/HTTPS server, REST, talk WS, portal | `app_core`, `common`, `freertos`, `services_config`, `services_network`, `esp_http_server`, `esp_https_server`, `esp_http_client`, `esp_timer` | - |
 | `services_ai` | AI client/task/prompt | `app_core`, `freertos`, `common` | - |
 | `services_ota` | OTA service | `freertos`, `common`, `app_update` | - |
 
@@ -74,6 +74,9 @@
 - HTTPS сертификаты:
   - `components/services_web/certs/servercert.pem`
   - `components/services_web/certs/prvtkey.pem`
+  - TLS PEM-файлы (`servercert.pem`, `prvtkey.pem`, `ca_cert.pem`, `ca_key.pem`) не должны храниться в git.
+  - Генерация: `python kws/scripts/gen_web_tls_cert.py --cert-dir components/services_web/certs`
+    (также автоматически запускается из CMake configure при отсутствии файлов).
 
 ## 6) Внешние зависимости (Raspberry Pi WS сервер)
 
@@ -111,4 +114,3 @@
   2. Проверить ownership: новый вызов не должен обходить `app_core`/service API.
   3. Для web endpoints: убедиться, что не добавляется прямая hardware-логика в HTTP handler.
   4. Для mode/runtime: изменения должны проходить через `service_runtime` и mode actions.
-

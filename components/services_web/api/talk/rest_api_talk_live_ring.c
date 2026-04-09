@@ -107,13 +107,7 @@ static esp_err_t talk_live_send_pcm_chunk(const int16_t *samples, uint16_t sampl
     if (samples == NULL || sample_count == 0U || sample_count > AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES) {
         return ESP_ERR_INVALID_ARG;
     }
-    audio_command_t cmd = { 0 };
-    cmd.id = AUDIO_CMD_PCM_STREAM_CHUNK;
-    cmd.payload.pcm_stream_chunk.sample_count = sample_count;
-    (void)memcpy(cmd.payload.pcm_stream_chunk.samples,
-                 samples,
-                 (size_t)sample_count * sizeof(int16_t));
-    return app_tasking_send_audio_command(&cmd, timeout_ms);
+    return app_tasking_send_audio_pcm_chunk_copy(samples, sample_count, timeout_ms);
 }
 
 static void talk_live_feeder_task(void *arg)

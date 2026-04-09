@@ -3,7 +3,6 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <string.h>
 #include "app_tasking.h"
 #include "esp_log.h"
 #include "mic_task_capture_ws.h"
@@ -21,19 +20,13 @@
 
 /* Single mic_task producer; static storage avoids large per-call stack frames. */
 static int16_t s_loopback_out_buf[AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES];
-static audio_command_t s_loopback_pcm_cmd;
 
 static bool push_pcm_stream_chunk(const int16_t *samples, uint16_t sample_count, uint32_t timeout_ms)
 {
     if (samples == NULL || sample_count == 0U || sample_count > AUDIO_PCM_STREAM_CHUNK_MAX_SAMPLES) {
         return false;
     }
-
-    memset(&s_loopback_pcm_cmd, 0, sizeof(s_loopback_pcm_cmd));
-    s_loopback_pcm_cmd.id = AUDIO_CMD_PCM_STREAM_CHUNK;
-    s_loopback_pcm_cmd.payload.pcm_stream_chunk.sample_count = sample_count;
-    memcpy(s_loopback_pcm_cmd.payload.pcm_stream_chunk.samples, samples, (size_t)sample_count * sizeof(int16_t));
-    return (app_tasking_send_audio_command(&s_loopback_pcm_cmd, timeout_ms) == ESP_OK);
+    return (app_tasking_send_audio_pcm_chunk_copy(samples, sample_count, timeout_ms) == ESP_OK);
 }
 
 static int16_t apply_loopback_gain(int16_t sample)
